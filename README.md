@@ -1,50 +1,43 @@
-# Welcome to your Expo app 👋
+# SpeakEasy
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+SpeakEasy is a mobile English-learning app built with Expo and React Native.
 
-## Get started
+The app helps learners practice English through:
+- personalized news-based reading
+- tap-to-lookup vocabulary support
+- translated vocabulary help based on native language
+- article and word audio playback
+- saved vocabulary and liked articles
+- an AI discussion experience for speaking practice
 
-1. Install dependencies
+## Stack
 
-   ```bash
-   npm install
-   ```
+- Expo
+- React Native
+- Expo Router
+- TypeScript
+- Zustand
+- OpenAI API
+- ElevenLabs API
 
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Run locally
 
 ```bash
-npm run reset-project
+npm install
+npx expo start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+To use the backend proxy for text-to-speech and translation, create local env files from:
+- `.env.example`
+- `.env.server.example`
 
-## Learn more
+Then start the proxy:
 
-To learn more about developing your project with Expo, look at the following resources:
+```bash
+npm run tts:server
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## Notes
 
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- Real API keys should stay only in local env files and must not be committed.
+- The app currently supports Expo Go for rapid testing and can later be built with EAS for iOS distribution.
