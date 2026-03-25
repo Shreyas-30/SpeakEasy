@@ -41,3 +41,8 @@ app-example
 # generated native folders
 /ios
 /android
+.env
+.env.server
+.env.server.local
+server/.cache/
+.claude/

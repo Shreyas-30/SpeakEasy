@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "jays-init",
-    "slug": "jays-init",
+    "name": "SpeakEasy",
+    "slug": "speakeasy",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "jaysinit",
+    "scheme": "speakeasy",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -38,7 +38,8 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,
