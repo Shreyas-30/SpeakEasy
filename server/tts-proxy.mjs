@@ -9,7 +9,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const cacheDir = resolve(__dirname, '.cache', 'tts');
 
 const PORT = Number.parseInt(process.env.PORT ?? '8787', 10);
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ?? `http://127.0.0.1:${PORT}`;
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ?? process.env.RENDER_EXTERNAL_URL ?? '';
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN ?? '*';
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY ?? '';
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb';
@@ -28,6 +28,24 @@ function sendJson(res, statusCode, payload) {
   applyCorsHeaders(res);
   res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(payload));
+}
+
+function getPublicBaseUrl(req) {
+  if (PUBLIC_BASE_URL) {
+    return PUBLIC_BASE_URL;
+  }
+
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  const forwardedHost = req.headers['x-forwarded-host'];
+  const host = forwardedHost || req.headers.host;
+  const protocol =
+    typeof forwardedProto === 'string' && forwardedProto.length > 0 ? forwardedProto : 'http';
+
+  if (!host) {
+    return `http://127.0.0.1:${PORT}`;
+  }
+
+  return `${protocol}://${host}`;
 }
 
 function buildSpeechText(text) {
@@ -189,7 +207,8 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const url = new URL(req.url, PUBLIC_BASE_URL);
+  const publicBaseUrl = getPublicBaseUrl(req);
+  const url = new URL(req.url, publicBaseUrl);
 
   if (req.method === 'GET' && url.pathname === '/health') {
     sendJson(res, 200, { ok: true, service: 'tts-proxy' });
@@ -335,7 +354,7 @@ const server = createServer(async (req, res) => {
       }
 
       sendJson(res, 200, {
-        audioUrl: `${PUBLIC_BASE_URL}/api/tts/cache/${fileName}`,
+        audioUrl: `${publicBaseUrl}/api/tts/cache/${fileName}`,
         voiceId,
         modelId: ELEVENLABS_MODEL_ID,
       });
@@ -354,5 +373,7 @@ await ensureCacheDir();
 await ensureTranslationCacheDir();
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`TTS proxy listening on ${PUBLIC_BASE_URL}`);
+  console.log(
+    `TTS proxy listening on ${PUBLIC_BASE_URL || `http://127.0.0.1:${PORT}`}`,
+  );
 });
