@@ -14,9 +14,129 @@ const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN ?? '*';
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY ?? '';
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb';
 const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID ?? 'eleven_multilingual_v2';
+const GUARDIAN_KEY = process.env.GUARDIAN_KEY ?? process.env.EXPO_PUBLIC_GUARDIAN_KEY ?? '';
+const GNEWS_KEY = process.env.GNEWS_KEY ?? process.env.EXPO_PUBLIC_GNEWS_KEY ?? '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 const OPENAI_TRANSLATION_MODEL = process.env.OPENAI_TRANSLATION_MODEL ?? 'gpt-4.1-mini';
 const translationCacheDir = resolve(__dirname, '.cache', 'translate');
+const GUARDIAN_BASE = 'https://content.guardianapis.com';
+const GNEWS_BASE = 'https://gnews.io/api/v4';
+
+const TOPIC_MAP = {
+  technology: { api: 'guardian', section: 'technology' },
+  sports: { api: 'guardian', section: 'sport' },
+  food: { api: 'guardian', section: 'food' },
+  travel: { api: 'guardian', section: 'travel' },
+  music: { api: 'guardian', section: 'music' },
+  science: { api: 'guardian', section: 'science' },
+  health: { api: 'guardian', section: 'lifeandstyle' },
+  business: { api: 'guardian', section: 'business' },
+  arts: { api: 'guardian', section: 'culture' },
+  fashion: { api: 'guardian', section: 'fashion' },
+  politics: { api: 'guardian', section: 'politics' },
+  movies: { api: 'guardian', section: 'film' },
+  nature: { api: 'guardian', section: 'environment' },
+  gardening: { api: 'guardian', section: 'lifeandstyle', tag: 'lifeandstyle/gardening' },
+  gaming: { api: 'gnews', topic: 'GAMING', query: 'gaming' },
+  anime: { api: 'gnews', query: 'anime' },
+};
+
+const TOPIC_COLORS = {
+  technology: '#3B82F6',
+  sports: '#10B981',
+  food: '#F59E0B',
+  travel: '#8B5CF6',
+  music: '#EC4899',
+  science: '#06B6D4',
+  health: '#EF4444',
+  business: '#6366F1',
+  arts: '#F97316',
+  gaming: '#84CC16',
+  fashion: '#D946EF',
+  politics: '#64748B',
+  anime: '#A855F7',
+  gardening: '#22C55E',
+  nature: '#14B8A6',
+  movies: '#EF4444',
+};
+
+const TOPIC_LABELS = {
+  technology: 'Technology',
+  sports: 'Sports',
+  food: 'Food & Cooking',
+  travel: 'Travel',
+  music: 'Music',
+  science: 'Science',
+  health: 'Health & Fitness',
+  business: 'Business',
+  arts: 'Arts & Culture',
+  gaming: 'Gaming',
+  fashion: 'Fashion',
+  politics: 'Politics',
+  anime: 'Anime',
+  gardening: 'Gardening',
+  nature: 'Nature',
+  movies: 'Movies & TV',
+};
+
+const MOCK_ARTICLES = [
+  {
+    id: '1',
+    title: 'Smartphones May Soon Last a Week Per Charge',
+    imageUrl: 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?w=600',
+    topic: 'Technology', topicId: 'technology', topicColor: '#3B82F6',
+    difficulty: 'Beginner', readTime: 5, publishedAt: '1 hour ago',
+    content: 'Researchers have made a breakthrough in battery technology...',
+    source: 'The Guardian', recommended: true,
+  },
+  {
+    id: '2',
+    title: 'Tech Giants Invest in Renewable Energy',
+    imageUrl: 'https://images.unsplash.com/photo-1473341304170-971dccb5ac1e?w=600',
+    topic: 'Technology', topicId: 'technology', topicColor: '#3B82F6',
+    difficulty: 'Intermediate', readTime: 2, publishedAt: '1 day ago',
+    content: 'Major technology companies are pledging billions toward renewable energy...',
+    source: 'BBC News', recommended: true,
+  },
+  {
+    id: '3',
+    title: 'Extreme Sports Gain Olympic Recognition',
+    imageUrl: 'https://images.unsplash.com/photo-1564769625905-50e93615e769?w=600',
+    topic: 'Sports', topicId: 'sports', topicColor: '#10B981',
+    difficulty: 'Beginner', readTime: 3, publishedAt: '2 hours ago',
+    content: 'The International Olympic Committee has announced new extreme sports categories...',
+    source: 'The Guardian',
+  },
+  {
+    id: '4',
+    title: 'Cybersecurity Threats Rise in Digital Age',
+    imageUrl: 'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=600',
+    topic: 'Technology', topicId: 'technology', topicColor: '#3B82F6',
+    difficulty: 'Intermediate', readTime: 4, publishedAt: '5 hours ago',
+    content: 'New cybersecurity reports indicate a 40% rise in ransomware attacks...',
+    source: 'Reuters',
+  },
+  {
+    id: '5',
+    title: 'Street Food Festivals Return Worldwide',
+    imageUrl: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600',
+    topic: 'Food & Cooking', topicId: 'food', topicColor: '#F59E0B',
+    difficulty: 'Beginner', readTime: 2, publishedAt: '8 hours ago',
+    content: 'Cities around the world are hosting street food festivals...',
+    source: 'BBC News',
+  },
+];
+
+const PLACEHOLDER_IMAGES = [
+  'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=600',
+  'https://images.unsplash.com/photo-1488190211105-8b0e65b80b4e?w=600',
+  'https://images.unsplash.com/photo-1432888498266-38ffec3eaf0a?w=600',
+  'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=600',
+  'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=600',
+  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=600',
+];
+const PLACEHOLDER_PREFIXES = ['Top Stories in', "What's New in", 'Latest from'];
+const PLACEHOLDER_TIMES = ['Just now', '1 hour ago', '3 hours ago'];
 
 function applyCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', ALLOW_ORIGIN);
@@ -52,6 +172,188 @@ function buildSpeechText(text) {
   return String(text ?? '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function timeAgo(dateStr) {
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diffMs / 60_000);
+  const hours = Math.floor(mins / 60);
+  const days = Math.floor(hours / 24);
+  if (mins < 60) return `${mins} min ago`;
+  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+  if (days < 7) return `${days} day${days > 1 ? 's' : ''} ago`;
+  return `${Math.floor(days / 7)} week${Math.floor(days / 7) > 1 ? 's' : ''} ago`;
+}
+
+function estimateReadTime(text) {
+  const words = String(text ?? '').trim().split(/\s+/).length;
+  return Math.max(2, Math.min(Math.ceil((words * 10) / 200), 12));
+}
+
+function assignDifficulty() {
+  const r = Math.random();
+  if (r < 0.5) return 'Beginner';
+  if (r < 0.85) return 'Intermediate';
+  return 'Advanced';
+}
+
+async function fetchFromGuardian(topicId, config, count = 6) {
+  const params = new URLSearchParams({
+    section: config.section,
+    'show-fields': 'thumbnail,trailText',
+    'page-size': count.toString(),
+    'order-by': 'newest',
+    'api-key': GUARDIAN_KEY,
+  });
+
+  if (config.tag) params.set('tag', config.tag);
+
+  const res = await fetch(`${GUARDIAN_BASE}/search?${params}`);
+  if (!res.ok) throw new Error(`Guardian ${res.status}`);
+  const data = await res.json();
+
+  return (data.response?.results ?? [])
+    .filter((item) => item.fields?.thumbnail && item.fields?.trailText)
+    .map((item) => ({
+      id: item.id,
+      title: item.webTitle,
+      imageUrl: item.fields.thumbnail,
+      topic: TOPIC_LABELS[topicId] ?? item.sectionName,
+      topicId,
+      topicColor: TOPIC_COLORS[topicId] ?? '#6B7280',
+      difficulty: assignDifficulty(),
+      readTime: estimateReadTime(item.fields.trailText),
+      publishedAt: timeAgo(item.webPublicationDate),
+      content: item.fields.trailText,
+      url: item.webUrl,
+      source: 'The Guardian',
+    }));
+}
+
+async function fetchFromGNews(topicId, config, count = 6) {
+  const params = new URLSearchParams({
+    lang: 'en',
+    max: count.toString(),
+    apikey: GNEWS_KEY,
+  });
+
+  let endpoint;
+  if (config.topic) {
+    params.set('topic', config.topic);
+    endpoint = 'top-headlines';
+  } else {
+    params.set('q', config.query);
+    endpoint = 'search';
+  }
+
+  const res = await fetch(`${GNEWS_BASE}/${endpoint}?${params}`);
+  if (!res.ok) throw new Error(`GNews ${res.status}`);
+  const data = await res.json();
+
+  return (data.articles ?? [])
+    .filter((item) => item.image && item.description)
+    .map((item) => ({
+      id: `gnews-${topicId}-${item.publishedAt}`,
+      title: item.title,
+      imageUrl: item.image,
+      topic: TOPIC_LABELS[topicId] ?? (topicId.charAt(0).toUpperCase() + topicId.slice(1)),
+      topicId,
+      topicColor: TOPIC_COLORS[topicId] ?? '#6B7280',
+      difficulty: assignDifficulty(),
+      readTime: estimateReadTime(item.description),
+      publishedAt: timeAgo(item.publishedAt),
+      content: item.description,
+      url: item.url,
+      source: item.source?.name ?? 'GNews',
+    }));
+}
+
+function generateMockArticlesForTopic(topicId, count = 3) {
+  const name = topicId
+    .split(' ')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+  const color = TOPIC_COLORS[topicId] ?? '#6B7280';
+
+  return Array.from({ length: count }, (_, i) => ({
+    id: `placeholder-${topicId}-${i}`,
+    title: `${PLACEHOLDER_PREFIXES[i % PLACEHOLDER_PREFIXES.length]} ${name}`,
+    imageUrl: PLACEHOLDER_IMAGES[(topicId.length + i) % PLACEHOLDER_IMAGES.length],
+    topic: name,
+    topicId,
+    topicColor: color,
+    difficulty: assignDifficulty(),
+    readTime: 2 + i,
+    publishedAt: PLACEHOLDER_TIMES[i],
+    content: `Stay up to date with the latest developments in ${name}. Curated content tailored to your interests.`,
+    source: 'SpeakEasy',
+  }));
+}
+
+function buildMockFeed(topicIds) {
+  const results = [];
+
+  for (const topicId of topicIds) {
+    const matched = MOCK_ARTICLES.filter((article) => article.topicId === topicId);
+    if (matched.length > 0) {
+      results.push(...matched);
+    } else {
+      results.push(...generateMockArticlesForTopic(topicId));
+    }
+  }
+
+  if (results.length === 0) {
+    return [...MOCK_ARTICLES].sort(() => Math.random() - 0.5);
+  }
+
+  return results.sort(() => Math.random() - 0.5);
+}
+
+function dedupeArticles(articles) {
+  const seen = new Set();
+
+  return articles.filter((article) => {
+    if (seen.has(article.id)) return false;
+    seen.add(article.id);
+    return true;
+  });
+}
+
+async function fetchFeedForTopics(topicIds) {
+  if (!GUARDIAN_KEY && !GNEWS_KEY) {
+    return buildMockFeed(topicIds);
+  }
+
+  const settled = await Promise.allSettled(
+    topicIds.map((topicId) => {
+      const config = TOPIC_MAP[topicId];
+
+      if (!config) {
+        if (!GNEWS_KEY) return Promise.resolve([]);
+        return fetchFromGNews(topicId, { api: 'gnews', query: topicId }, 6);
+      }
+
+      if (config.api === 'guardian' && GUARDIAN_KEY) {
+        return fetchFromGuardian(topicId, config);
+      }
+
+      if (config.api === 'gnews' && GNEWS_KEY) {
+        return fetchFromGNews(topicId, config, 6);
+      }
+
+      return Promise.resolve([]);
+    }),
+  );
+
+  const all = dedupeArticles(
+    settled.flatMap((result) => (result.status === 'fulfilled' ? result.value : [])),
+  );
+
+  if (all.length === 0) {
+    return buildMockFeed(topicIds);
+  }
+
+  return all.sort(() => Math.random() - 0.5);
 }
 
 async function readJsonBody(req) {
@@ -229,6 +531,29 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       sendJson(res, 500, {
         error: error instanceof Error ? error.message : 'Unable to load ElevenLabs voices',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/feed') {
+    try {
+      const topicsParam = url.searchParams.get('topics') ?? '';
+      const topicIds = topicsParam
+        .split(',')
+        .map((topic) => topic.trim())
+        .filter(Boolean);
+
+      if (topicIds.length === 0) {
+        sendJson(res, 400, { error: 'At least one topic is required' });
+        return;
+      }
+
+      const articles = await fetchFeedForTopics(topicIds);
+      sendJson(res, 200, { articles });
+    } catch (error) {
+      sendJson(res, 500, {
+        error: error instanceof Error ? error.message : 'Unable to load feed articles',
       });
     }
     return;

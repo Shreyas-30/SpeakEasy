@@ -5,6 +5,7 @@ This folder contains the public backend proxy used by the SpeakEasy mobile app f
 - ElevenLabs text-to-speech
 - ElevenLabs voice listing
 - OpenAI-powered vocabulary translation
+- server-side news feed fetching
 
 ## Local run
 
@@ -32,6 +33,8 @@ Recommended settings:
 - `ELEVENLABS_API_KEY`
 - `ELEVENLABS_VOICE_ID`
 - `ELEVENLABS_MODEL_ID`
+- `GUARDIAN_KEY`
+- `GNEWS_KEY`
 - `OPENAI_API_KEY`
 - `OPENAI_TRANSLATION_MODEL`
 
