@@ -3,7 +3,6 @@ import { MOCK_ARTICLES } from '@/constants/mockData';
 
 const GUARDIAN_KEY = process.env.EXPO_PUBLIC_GUARDIAN_KEY ?? '';
 const GNEWS_KEY = process.env.EXPO_PUBLIC_GNEWS_KEY ?? '';
-const TTS_PROXY_URL = process.env.EXPO_PUBLIC_TTS_PROXY_URL ?? '';
 
 const GUARDIAN_BASE = 'https://content.guardianapis.com';
 const GNEWS_BASE = 'https://gnews.io/api/v4';
@@ -250,37 +249,9 @@ function dedupeArticles(articles: Article[]): Article[] {
   });
 }
 
-async function fetchFromBackend(topicIds: string[]): Promise<Article[] | null> {
-  if (!TTS_PROXY_URL) return null;
-
-  try {
-    const feedUrl = new URL('/api/feed', TTS_PROXY_URL);
-    feedUrl.searchParams.set('topics', topicIds.join(','));
-
-    const res = await fetch(feedUrl.toString());
-    if (!res.ok) {
-      return null;
-    }
-
-    const data = await res.json();
-    if (!Array.isArray(data?.articles)) {
-      return null;
-    }
-
-    return data.articles as Article[];
-  } catch {
-    return null;
-  }
-}
-
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export async function fetchArticlesForTopics(topicIds: string[]): Promise<Article[]> {
-  const backendArticles = await fetchFromBackend(topicIds);
-  if (backendArticles && backendArticles.length > 0) {
-    return backendArticles;
-  }
-
   // If no API keys are configured, use the topic-aware mock feed
   if (!GUARDIAN_KEY && !GNEWS_KEY) {
     return buildMockFeed(topicIds);
