@@ -18,6 +18,7 @@ const GUARDIAN_KEY = process.env.GUARDIAN_KEY ?? process.env.EXPO_PUBLIC_GUARDIA
 const GNEWS_KEY = process.env.GNEWS_KEY ?? process.env.EXPO_PUBLIC_GNEWS_KEY ?? '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 const OPENAI_TRANSLATION_MODEL = process.env.OPENAI_TRANSLATION_MODEL ?? 'gpt-4.1-mini';
+const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL ?? 'gpt-4o-mini';
 const translationCacheDir = resolve(__dirname, '.cache', 'translate');
 const GUARDIAN_BASE = 'https://content.guardianapis.com';
 const GNEWS_BASE = 'https://gnews.io/api/v4';
@@ -686,6 +687,68 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       sendJson(res, 500, {
         error: error instanceof Error ? error.message : 'Unknown TTS proxy error',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/chat') {
+    if (!OPENAI_API_KEY) {
+      sendJson(res, 500, {
+        error: 'Missing OPENAI_API_KEY. Add it to .env.server before starting the proxy.',
+      });
+      return;
+    }
+
+    try {
+      const body = await readJsonBody(req);
+      const { messages = [], articleTitle, articleSource, articleContent, tutorName } = body;
+
+      if (!articleTitle || !articleContent) {
+        sendJson(res, 400, { error: 'articleTitle and articleContent are required' });
+        return;
+      }
+
+      const systemPrompt = `You are ${tutorName ?? 'Sophia'}, a friendly English conversation tutor helping a language learner practice their English.
+
+You are discussing the following news article with the user:
+Title: "${articleTitle}"
+Source: ${articleSource ?? ''}
+Content: ${articleContent}
+
+Your goals:
+- Help the user practice speaking and writing English naturally
+- Discuss the article in an engaging, conversational way
+- Ask follow-up questions to keep the conversation going
+- Gently correct grammar mistakes by naturally using the correct form in your reply (do not explicitly call out errors)
+- Keep your responses concise — 2 to 3 sentences max so it feels like a real conversation
+- Be warm, encouraging and patient`;
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: OPENAI_CHAT_MODEL,
+          messages: [{ role: 'system', content: systemPrompt }, ...messages],
+          max_tokens: 150,
+          temperature: 0.8,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`OpenAI ${response.status}: ${errorText.slice(0, 300)}`);
+      }
+
+      const data = await response.json();
+      const reply = data.choices?.[0]?.message?.content?.trim() ?? 'Sorry, I could not respond.';
+      sendJson(res, 200, { reply });
+    } catch (error) {
+      sendJson(res, 500, {
+        error: error instanceof Error ? error.message : 'Unable to get AI response',
       });
     }
     return;

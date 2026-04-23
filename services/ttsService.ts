@@ -45,7 +45,7 @@ export async function requestSpeechUrl(
     throw new Error('Missing EXPO_PUBLIC_TTS_PROXY_URL for ElevenLabs proxy mode');
   }
 
-  const response = await fetch(TTS_PROXY_URL, {
+  const response = await fetch(new URL('/api/tts', TTS_PROXY_URL).toString(), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
