@@ -17,7 +17,7 @@ export async function getAIResponse(
   }
 
   try {
-    const response = await fetch(`${BACKEND_URL}/api/chat`, {
+    const response = await fetch(new URL('/api/chat', BACKEND_URL).toString(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages, articleTitle, articleSource, articleContent, tutorName }),
