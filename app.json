@@ -13,7 +13,8 @@
       "buildNumber": "1",
       "supportsTablet": true,
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "SpeakEasy may access your photo library through third-party components."
       }
     },
     "android": {
