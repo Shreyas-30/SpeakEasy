@@ -5,7 +5,7 @@ import { Colors } from '@/constants/colors';
 import {
   HARD_PAYWALL_COPY,
   HardPaywallReason,
-} from '@/src/config/subscriptionPlans';
+} from '@/constants/subscription';
 
 interface HardPaywallProps {
   visible: boolean;

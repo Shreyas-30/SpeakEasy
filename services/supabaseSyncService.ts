@@ -13,7 +13,7 @@ import {
   SubscriptionPlanId,
   SubscriptionProvider,
   SubscriptionStatus,
-} from '@/src/config/subscriptionPlans';
+} from '@/constants/subscription';
 import { supabase } from './supabaseClient';
 
 type SyncState = {

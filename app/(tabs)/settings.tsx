@@ -18,7 +18,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { TOPICS } from '@/constants/topics';
 import { fetchTtsVoices, getConfiguredDefaultVoiceId, getTtsMode } from '@/services/ttsService';
 import { NativeLanguage, TtsVoiceOption } from '@/types';
-import { getPlanById } from '@/src/config/subscriptionPlans';
+import { getPlanById } from '@/constants/subscription';
 
 const NATIVE_LANGUAGE_LABELS: Record<NativeLanguage, string> = {
   ar: 'Arabic',

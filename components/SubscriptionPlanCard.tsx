@@ -5,7 +5,7 @@ import { Colors } from '@/constants/colors';
 import {
   SubscriptionPlanId,
   SUBSCRIPTION_PLANS,
-} from '@/src/config/subscriptionPlans';
+} from '@/constants/subscription';
 
 type SubscriptionPlan = (typeof SUBSCRIPTION_PLANS)[number];
 

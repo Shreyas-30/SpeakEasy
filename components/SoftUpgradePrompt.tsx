@@ -5,7 +5,7 @@ import { Colors } from '@/constants/colors';
 import {
   SOFT_UPGRADE_PROMPTS,
   SoftPromptTrigger,
-} from '@/src/config/subscriptionPlans';
+} from '@/constants/subscription';
 
 interface SoftUpgradePromptProps {
   trigger: SoftPromptTrigger | null;

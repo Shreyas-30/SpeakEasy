@@ -139,7 +139,3 @@ export const SOFT_UPGRADE_PROMPTS: Record<
 export function getPlanById(planId: SubscriptionPlanId) {
   return SUBSCRIPTION_PLANS.find((plan) => plan.id === planId) ?? SUBSCRIPTION_PLANS[0];
 }
-
-export function hasUnlimitedAccess(planId: SubscriptionPlanId) {
-  return planId !== 'free';
-}

@@ -16,7 +16,7 @@ import { useAppStore } from '@/store/useAppStore';
 import {
   SUBSCRIPTION_PLANS,
   getPlanById,
-} from '@/src/config/subscriptionPlans';
+} from '@/constants/subscription';
 
 export default function SubscriptionScreen() {
   const {

@@ -1,4 +1,4 @@
-import type { SubscriptionEntitlement } from '@/src/config/subscriptionPlans';
+import type { SubscriptionEntitlement } from '@/constants/subscription';
 
 export type DifficultyLevel = 'Beginner' | 'Intermediate' | 'Advanced';
 export type NativeLanguage =

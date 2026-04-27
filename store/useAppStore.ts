@@ -15,7 +15,7 @@ import {
   SubscriptionEntitlement,
   SUBSCRIPTION_LIMITS,
   DEFAULT_SUBSCRIPTION_ENTITLEMENT,
-} from '@/src/config/subscriptionPlans';
+} from '@/constants/subscription';
 import {
   hasPaidEntitlement,
   requestSubscriptionUpgrade,

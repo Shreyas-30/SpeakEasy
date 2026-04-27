@@ -2,8 +2,7 @@ import {
   DEFAULT_SUBSCRIPTION_ENTITLEMENT,
   SubscriptionEntitlement,
   SubscriptionPlanId,
-  hasUnlimitedAccess,
-} from '@/src/config/subscriptionPlans';
+} from '@/constants/subscription';
 
 export function getEffectiveEntitlement(
   entitlement?: SubscriptionEntitlement | null,
@@ -15,7 +14,7 @@ export function hasPaidEntitlement(entitlement?: SubscriptionEntitlement | null)
   const effectiveEntitlement = getEffectiveEntitlement(entitlement);
 
   return (
-    hasUnlimitedAccess(effectiveEntitlement.planId) &&
+    effectiveEntitlement.planId !== 'free' &&
     (effectiveEntitlement.status === 'active' || effectiveEntitlement.status === 'trialing')
   );
 }
