@@ -4,6 +4,7 @@ import {
   Animated,
   FlatList,
   Image,
+  ImageSourcePropType,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -21,8 +22,16 @@ import { TOPICS } from '@/constants/topics';
 import { useAppStore } from '@/store/useAppStore';
 import { CustomTopic, NativeLanguage, Topic } from '@/types';
 
-type OnboardingStep = 'language' | 'topics';
+type OnboardingStep = 'intro-1' | 'intro-2' | 'intro-3' | 'language' | 'topics';
 type SuggestionSource = 'predefined' | 'curated';
+
+type IntroStep = {
+  id: Extract<OnboardingStep, 'intro-1' | 'intro-2' | 'intro-3'>;
+  title: string;
+  subtitle: string;
+  buttonLabel: string;
+  previewImage: ImageSourcePropType;
+};
 
 type LanguageOption = {
   id: NativeLanguage;
@@ -49,6 +58,30 @@ const BUTTON_DISABLED = '#B8B59A';
 const SELECTED_CHIP = '#A59D47';
 const SOFT_BEIGE = 'rgba(231,227,209,0.42)';
 const SEARCH_BG = '#F7F6F3';
+
+const INTRO_STEPS: IntroStep[] = [
+  {
+    id: 'intro-1',
+    title: 'Read what you care about',
+    subtitle: 'Browse short articles on topics you already enjoy — news, food, culture, and more.',
+    buttonLabel: 'Continue',
+    previewImage: require('@/assets/images/onboarding/intro-read.png'),
+  },
+  {
+    id: 'intro-2',
+    title: 'Practice speaking, naturally',
+    subtitle: 'Try saying what you’ve read out loud. We’ll help with pronunciation when you need it.',
+    buttonLabel: 'Continue',
+    previewImage: require('@/assets/images/onboarding/intro-speak.png'),
+  },
+  {
+    id: 'intro-3',
+    title: 'Made for your interests',
+    subtitle: 'Choose what you like, and we’ll build a feed just for you.',
+    buttonLabel: 'Get Started',
+    previewImage: require('@/assets/images/onboarding/intro-personalize.png'),
+  },
+];
 
 const NATIVE_LANGUAGE_OPTIONS: LanguageOption[] = [
   { id: 'ar', label: 'Arabic', flag: '🇸🇦' },
@@ -178,6 +211,19 @@ function StepIndicator({ step }: { step: OnboardingStep }) {
   );
 }
 
+function IntroStepIndicator({ activeIndex }: { activeIndex: number }) {
+  return (
+    <View style={styles.introIndicator}>
+      {INTRO_STEPS.map((step, index) => (
+        <View
+          key={step.id}
+          style={[styles.introIndicatorDot, index === activeIndex && styles.introIndicatorActive]}
+        />
+      ))}
+    </View>
+  );
+}
+
 function buildSelectedMeta(
   selectedTopics: string[],
   customTopics: CustomTopic[],
@@ -194,7 +240,14 @@ function buildSelectedMeta(
 
 export default function OnboardingScreen() {
   const params = useLocalSearchParams<{ step?: string; returnTo?: string }>();
-  const currentStep: OnboardingStep = params.step === 'topics' ? 'topics' : 'language';
+  const requestedStep = params.step;
+  const currentStep: OnboardingStep =
+    requestedStep === 'topics' ||
+    requestedStep === 'language' ||
+    requestedStep === 'intro-2' ||
+    requestedStep === 'intro-3'
+      ? requestedStep
+      : 'intro-1';
   const returnToSettings = params.returnTo === 'settings';
 
   const [search, setSearch] = useState('');
@@ -291,6 +344,24 @@ export default function OnboardingScreen() {
     });
   };
 
+  const goToNextIntroStep = () => {
+    const introIndex = INTRO_STEPS.findIndex((step) => step.id === currentStep);
+    const nextIntroStep = INTRO_STEPS[introIndex + 1];
+
+    if (nextIntroStep) {
+      router.push({
+        pathname: '/onboarding',
+        params: { step: nextIntroStep.id },
+      });
+      return;
+    }
+
+    router.push({
+      pathname: '/onboarding',
+      params: { step: 'language' },
+    });
+  };
+
   const handleComplete = async () => {
     if (!nativeLanguage || selectedTopics.length === 0) return;
 
@@ -369,6 +440,45 @@ export default function OnboardingScreen() {
       </TouchableOpacity>
     );
   };
+
+  const activeIntroStep = INTRO_STEPS.find((step) => step.id === currentStep);
+
+  if (activeIntroStep) {
+    const activeIntroIndex = INTRO_STEPS.findIndex((step) => step.id === activeIntroStep.id);
+
+    return (
+      <SafeAreaView style={styles.introContainer}>
+        <StatusBar barStyle="dark-content" />
+
+        <View style={styles.introScreen}>
+          <IntroStepIndicator activeIndex={activeIntroIndex} />
+
+          <View style={styles.introCopy}>
+            <Text style={styles.introTitle}>{activeIntroStep.title}</Text>
+            <Text style={styles.introSubtitle}>{activeIntroStep.subtitle}</Text>
+          </View>
+
+          <View style={styles.introPreviewWrap}>
+            <Image
+              source={activeIntroStep.previewImage}
+              style={styles.introPreviewImage}
+              resizeMode="contain"
+            />
+          </View>
+
+          <View style={styles.introFooter}>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={goToNextIntroStep}
+              activeOpacity={0.88}
+            >
+              <Text style={styles.primaryButtonText}>{activeIntroStep.buttonLabel}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (currentStep === 'language') {
     return (
@@ -617,6 +727,64 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  introContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  introScreen: {
+    flex: 1,
+    paddingHorizontal: 22,
+  },
+  introIndicator: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 4,
+    paddingTop: 23,
+  },
+  introIndicatorDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: '#D2D2D2',
+  },
+  introIndicatorActive: {
+    width: 28,
+    backgroundColor: '#9A9A9A',
+  },
+  introCopy: {
+    alignItems: 'center',
+    paddingTop: 92,
+  },
+  introTitle: {
+    fontSize: 22,
+    lineHeight: 29,
+    fontWeight: '500',
+    color: '#050505',
+    textAlign: 'center',
+  },
+  introSubtitle: {
+    marginTop: 8,
+    width: 280,
+    fontSize: 16,
+    lineHeight: 22,
+    color: 'rgba(0,0,0,0.5)',
+    textAlign: 'center',
+  },
+  introPreviewWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 62,
+  },
+  introPreviewImage: {
+    width: '100%',
+    maxWidth: 320,
+    height: 560,
+  },
+  introFooter: {
+    paddingBottom: 18,
   },
   screenInner: {
     flex: 1,

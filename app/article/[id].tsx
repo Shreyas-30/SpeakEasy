@@ -4,7 +4,6 @@ import {
   Text,
   View,
   Image,
-  ScrollView,
   TouchableOpacity,
   SafeAreaView,
   StatusBar,
@@ -20,6 +19,8 @@ import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-au
 import { Colors } from '@/constants/colors';
 import { useAppStore } from '@/store/useAppStore';
 import { VocabWord } from '@/types';
+import { HardPaywall } from '@/components/HardPaywall';
+import { SoftUpgradePrompt } from '@/components/SoftUpgradePrompt';
 import {
   lookupWord,
   WordDefinition,
@@ -34,6 +35,7 @@ import {
   speakTextOnDevice,
   stopDeviceSpeech,
 } from '@/services/ttsService';
+import { logArticleEvent } from '@/services/supabaseSyncService';
 
 const HERO_HEIGHT = 220;
 const NATIVE_LANGUAGE_LABELS = {
@@ -61,8 +63,15 @@ export default function ArticleReader() {
     savedVocab,
     nativeLanguage,
     selectedVoiceId,
+    pendingHardPaywall,
+    activeSoftPrompt,
     toggleLikeArticle,
     saveVocabWord,
+    canStartSpeakingPractice,
+    recordArticleOpen,
+    recordSpeakingPracticeStart,
+    clearHardPaywall,
+    dismissSoftPrompt,
   } = useAppStore();
 
   // Find article across all lists
@@ -93,6 +102,7 @@ export default function ArticleReader() {
   const [listenError, setListenError] = useState<string | null>(null);
   const [audioSource, setAudioSource] = useState<string | null>(null);
   const sheetAnim = useRef(new Animated.Value(400)).current;
+  const hasLoggedArticleOpen = useRef(false);
   const player = useAudioPlayer(null, { downloadFirst: true, updateInterval: 250 });
   const playerStatus = useAudioPlayerStatus(player);
   const wordPlayer = useAudioPlayer(null, { downloadFirst: true, updateInterval: 250 });
@@ -147,13 +157,16 @@ export default function ArticleReader() {
       setIsLoadingDef(true);
       setIsLoadingTranslation(false);
       openSheet();
+      if (article) {
+        void logArticleEvent('vocab_lookup', article, { word: clean.toLowerCase() });
+      }
 
       const def = await lookupWord(clean);
       setWordDef(def);
       setIsLoadingDef(false);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
+    [article]
   );
 
   const handleSaveWord = useCallback(() => {
@@ -167,6 +180,7 @@ export default function ArticleReader() {
       savedAt: 'just now',
     };
     saveVocabWord(vocabWord);
+    void logArticleEvent('vocab_save', article, { word: wordDef.word });
   }, [article, wordDef, saveVocabWord]);
 
   const handlePronounceSelectedWord = useCallback(async () => {
@@ -265,6 +279,7 @@ export default function ArticleReader() {
 
       try {
         setIsListening(true);
+        void logArticleEvent('listen_start', article);
 
         if (audioSource) {
           try {
@@ -304,6 +319,7 @@ export default function ArticleReader() {
     }
 
     try {
+      void logArticleEvent('listen_start', article);
       await speakArticleOnDevice(article.title, article.source, article.content, {
         onStart: () => setIsListening(true),
         onDone: () => setIsListening(false),
@@ -330,6 +346,13 @@ export default function ArticleReader() {
       interruptionMode: 'doNotMix',
     });
   }, []);
+
+  useEffect(() => {
+    if (!article || hasLoggedArticleOpen.current) return;
+    hasLoggedArticleOpen.current = true;
+    recordArticleOpen();
+    void logArticleEvent('article_open', article);
+  }, [article, recordArticleOpen]);
 
   useEffect(() => {
     if (getTtsMode() !== 'elevenlabs-proxy') return;
@@ -545,6 +568,19 @@ export default function ArticleReader() {
           </TouchableOpacity>
 
           {listenError ? <Text style={styles.listenError}>{listenError}</Text> : null}
+
+          {activeSoftPrompt ? (
+            <View style={styles.softPromptWrap}>
+              <SoftUpgradePrompt
+                trigger={activeSoftPrompt}
+                onDismiss={() => dismissSoftPrompt()}
+                onSeePlans={() => {
+                  dismissSoftPrompt();
+                  router.push('/subscription' as any);
+                }}
+              />
+            </View>
+          ) : null}
         </View>
 
         {/* ── Reading Zone ── */}
@@ -586,7 +622,7 @@ export default function ArticleReader() {
         {/* ── Saved vocab from this article ── */}
         {articleVocab.length > 0 && (
           <View style={styles.vocabSection}>
-            <Text style={styles.vocabSectionTitle}>Words you've saved from this article</Text>
+            <Text style={styles.vocabSectionTitle}>Words you&apos;ve saved from this article</Text>
             <View style={styles.vocabChips}>
               {articleVocab.map((v) => (
                 <View key={v.id} style={styles.vocabChip}>
@@ -599,9 +635,12 @@ export default function ArticleReader() {
 
         <TouchableOpacity
           style={styles.discussButton}
-          onPress={() =>
+          onPress={() => {
+            if (!canStartSpeakingPractice()) return;
+            recordSpeakingPracticeStart();
+            void logArticleEvent('discuss_start', article);
             router.push({ pathname: '/discuss/[id]', params: { id: article.id } })
-          }
+          }}
           activeOpacity={0.9}
         >
           <Text style={styles.discussButtonText}>Discuss this article</Text>
@@ -629,12 +668,13 @@ export default function ArticleReader() {
 
         <TouchableOpacity
           style={styles.actionBtn}
-          onPress={() =>
-            Share.share({
+          onPress={() => {
+            void logArticleEvent('article_share', article);
+            void Share.share({
               message: article.title,
               url: article.url ?? '',
-            })
-          }
+            });
+          }}
         >
           <Ionicons
             name="share-outline"
@@ -650,6 +690,7 @@ export default function ArticleReader() {
           style={styles.actionBtn}
           onPress={() => {
             if (article.url) {
+              void logArticleEvent('full_article_open', article);
               void Linking.openURL(article.url);
             }
           }}
@@ -663,6 +704,16 @@ export default function ArticleReader() {
           <Text style={styles.actionLabel}>Full article</Text>
         </TouchableOpacity>
       </View>
+
+      <HardPaywall
+        visible={Boolean(pendingHardPaywall)}
+        reason={pendingHardPaywall}
+        onClose={clearHardPaywall}
+        onUpgrade={() => {
+          clearHardPaywall();
+          router.push('/subscription' as any);
+        }}
+      />
 
       {/* ── Word Definition Bottom Sheet ── */}
       <Modal
@@ -690,7 +741,7 @@ export default function ArticleReader() {
                 <View style={styles.sheetLoading}>
                   <ActivityIndicator color={Colors.accent} />
                   <Text style={styles.sheetLoadingText}>
-                    Looking up "{selectedWord}"…
+                    Looking up &quot;{selectedWord}&quot;…
                   </Text>
                 </View>
               ) : wordDef ? (
@@ -795,7 +846,7 @@ export default function ArticleReader() {
 
                   {/* Example */}
                   {wordDef.example && (
-                    <Text style={styles.example}>"{wordDef.example}"</Text>
+                    <Text style={styles.example}>&quot;{wordDef.example}&quot;</Text>
                   )}
 
                   {/* Save button */}
@@ -971,6 +1022,9 @@ const styles = StyleSheet.create({
     color: Colors.error,
     lineHeight: 17,
     marginTop: 8,
+  },
+  softPromptWrap: {
+    marginTop: 14,
   },
 
   // ── Reading zone ──

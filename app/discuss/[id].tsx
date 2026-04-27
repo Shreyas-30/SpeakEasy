@@ -7,6 +7,7 @@ import {
   stopDeviceSpeech,
 } from '@/services/ttsService';
 import { useAppStore } from '@/store/useAppStore';
+import { SoftUpgradePrompt } from '@/components/SoftUpgradePrompt';
 import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -37,7 +38,14 @@ interface Message {
 
 export default function DiscussScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { articles, savedArticles, selectedVoiceName, selectedVoiceId } = useAppStore();
+  const {
+    articles,
+    savedArticles,
+    selectedVoiceName,
+    selectedVoiceId,
+    activeSoftPrompt,
+    dismissSoftPrompt,
+  } = useAppStore();
 
   const article = [...articles, ...savedArticles].find((item) => item.id === id);
   const tutorName = selectedVoiceName ?? 'Sophia';
@@ -253,6 +261,19 @@ export default function DiscussScreen() {
         </Text>
       </View>
 
+      {activeSoftPrompt ? (
+        <View style={styles.softPromptWrap}>
+          <SoftUpgradePrompt
+            trigger={activeSoftPrompt}
+            onDismiss={() => dismissSoftPrompt()}
+            onSeePlans={() => {
+              dismissSoftPrompt();
+              router.push('/subscription' as any);
+            }}
+          />
+        </View>
+      ) : null}
+
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -430,6 +451,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: 'rgba(161,114,76,0.15)',
   },
   articleCardTitle: { fontSize: 12, color: '#7A7663', flex: 1, fontWeight: '500' },
+  softPromptWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    backgroundColor: '#F8F7F1',
+  },
 
   // Messages
   messagesList: { flex: 1 },

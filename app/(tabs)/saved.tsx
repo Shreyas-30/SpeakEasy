@@ -16,9 +16,18 @@ import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-au
 import { Colors } from '@/constants/colors';
 import { useAppStore } from '@/store/useAppStore';
 import { getTtsMode, requestSpeechUrl, speakTextOnDevice, stopDeviceSpeech } from '@/services/ttsService';
+import { HardPaywall } from '@/components/HardPaywall';
 
 export default function SavedScreen() {
-  const { likedArticles, savedVocab, removeVocabWord, selectedVoiceId } = useAppStore();
+  const {
+    likedArticles,
+    savedVocab,
+    removeVocabWord,
+    selectedVoiceId,
+    pendingHardPaywall,
+    canOpenArticle,
+    clearHardPaywall,
+  } = useAppStore();
   const [showAllLiked, setShowAllLiked] = React.useState(false);
   const [showAllVocab, setShowAllVocab] = React.useState(false);
   const [speakingWordId, setSpeakingWordId] = React.useState<string | null>(null);
@@ -191,12 +200,13 @@ export default function SavedScreen() {
               <TouchableOpacity
                 style={styles.articleCard}
                 activeOpacity={0.85}
-                onPress={() =>
+                onPress={() => {
+                  if (!canOpenArticle()) return;
                   router.push({
                     pathname: '/article/[id]',
                     params: { id: item.id },
-                  })
-                }
+                  });
+                }}
               >
                 <Image
                   source={{ uri: item.imageUrl }}
@@ -262,7 +272,7 @@ export default function SavedScreen() {
                     </View>
                     <Text style={styles.vocabDefinition}>{word.definition}</Text>
                     <Text style={styles.vocabContext} numberOfLines={1}>
-                      "{word.context}"
+                      &quot;{word.context}&quot;
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -277,6 +287,16 @@ export default function SavedScreen() {
           )}
         </View>
       </ScrollView>
+
+      <HardPaywall
+        visible={Boolean(pendingHardPaywall)}
+        reason={pendingHardPaywall}
+        onClose={clearHardPaywall}
+        onUpgrade={() => {
+          clearHardPaywall();
+          router.push('/subscription' as any);
+        }}
+      />
     </SafeAreaView>
   );
 }

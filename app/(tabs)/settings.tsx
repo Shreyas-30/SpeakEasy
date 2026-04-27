@@ -14,9 +14,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Colors } from '@/constants/colors';
 import { useAppStore } from '@/store/useAppStore';
+import { useAuthStore } from '@/store/useAuthStore';
 import { TOPICS } from '@/constants/topics';
 import { fetchTtsVoices, getConfiguredDefaultVoiceId, getTtsMode } from '@/services/ttsService';
 import { NativeLanguage, TtsVoiceOption } from '@/types';
+import { getPlanById } from '@/src/config/subscriptionPlans';
 
 const NATIVE_LANGUAGE_LABELS: Record<NativeLanguage, string> = {
   ar: 'Arabic',
@@ -146,6 +148,7 @@ export default function SettingsScreen() {
     selectedVoiceId,
     selectedVoiceName,
     nativeLanguage,
+    subscriptionEntitlement,
     setSelectedVoice,
   } = useAppStore();
   const [notificationsEnabled, setNotificationsEnabled] = React.useState(true);
@@ -154,11 +157,13 @@ export default function SettingsScreen() {
   const [voicesLoading, setVoicesLoading] = React.useState(false);
   const [voicesError, setVoicesError] = React.useState<string | null>(null);
   const hasLoadedVoices = React.useRef(false);
+  const { user, isLoading: authLoading, error: authError, signOut, syncCurrentUserData } = useAuthStore();
 
   const myPredefinedTopics = TOPICS.filter((t) => selectedTopics.includes(t.id));
   const myCustomTopics = customTopics.filter((t) => selectedTopics.includes(t.id));
   const myTopics = [...myPredefinedTopics, ...myCustomTopics];
   const isVoicePickerEnabled = getTtsMode() === 'elevenlabs-proxy';
+  const currentPlan = getPlanById(subscriptionEntitlement.planId);
 
   React.useEffect(() => {
     if (!isVoicePickerEnabled || hasLoadedVoices.current) return;
@@ -417,20 +422,63 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Account</Text>
           <View style={styles.card}>
-            <SettingRow icon="person-outline" label="Profile" onPress={() => {}} />
+            <SettingRow
+              icon="person-outline"
+              label="Profile"
+              value={user?.email ?? 'Not signed in'}
+              onPress={() => router.push('/auth' as any)}
+            />
             <View style={styles.divider} />
+            <SettingRow
+              icon="card-outline"
+              label="Subscription"
+              value={currentPlan.name}
+              onPress={() => router.push('/subscription' as any)}
+            />
+            <View style={styles.divider} />
+            {user ? (
+              <>
+                <SettingRow
+                  icon="cloud-upload-outline"
+                  label="Sync now"
+                  value={authLoading ? 'Syncing...' : undefined}
+                  onPress={() => {
+                    void syncCurrentUserData();
+                  }}
+                />
+                <View style={styles.divider} />
+              </>
+            ) : null}
             <SettingRow icon="lock-closed-outline" label="Privacy" onPress={() => {}} />
             <View style={styles.divider} />
             <SettingRow icon="help-circle-outline" label="Help & Support" onPress={() => {}} />
           </View>
+          {authError ? <Text style={styles.accountError}>{authError}</Text> : null}
         </View>
 
         {/* Sign out */}
         <View style={styles.section}>
           <View style={styles.card}>
-            <TouchableOpacity style={styles.signOutRow}>
-              <Ionicons name="log-out-outline" size={20} color={Colors.error} />
-              <Text style={styles.signOutText}>Sign out</Text>
+            <TouchableOpacity
+              style={styles.signOutRow}
+              onPress={() => {
+                if (user) {
+                  void signOut();
+                } else {
+                  router.push('/auth' as any);
+                }
+              }}
+              disabled={authLoading}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name={user ? 'log-out-outline' : 'log-in-outline'}
+                size={20}
+                color={user ? Colors.error : Colors.accent}
+              />
+              <Text style={[styles.signOutText, !user && styles.signInText]}>
+                {user ? 'Sign out' : 'Sign in or create account'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -657,6 +705,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.error,
     fontWeight: '500',
+  },
+  signInText: {
+    color: Colors.accent,
+  },
+  accountError: {
+    marginTop: 8,
+    paddingHorizontal: 4,
+    fontSize: 12,
+    lineHeight: 18,
+    color: Colors.error,
   },
   version: {
     textAlign: 'center',

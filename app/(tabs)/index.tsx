@@ -17,6 +17,8 @@ import { Colors } from '@/constants/colors';
 import { useAppStore } from '@/store/useAppStore';
 import { Article } from '@/types';
 import SpeakEasyLogo from '../../assets/images/speakeasy-logo.svg';
+import { HardPaywall } from '@/components/HardPaywall';
+import { SoftUpgradePrompt } from '@/components/SoftUpgradePrompt';
 
 function buildExcerpt(content: string): string {
   return content.replace(/\s+/g, ' ').trim();
@@ -104,9 +106,20 @@ function FeedCard({ article, onPress }: { article: Article; onPress: () => void 
 }
 
 export default function HomeScreen() {
-  const { articles, isLoading, error, fetchFeed } = useAppStore();
+  const {
+    articles,
+    isLoading,
+    error,
+    fetchFeed,
+    pendingHardPaywall,
+    activeSoftPrompt,
+    canOpenArticle,
+    clearHardPaywall,
+    dismissSoftPrompt,
+  } = useAppStore();
 
   const navigateToArticle = (article: Article) => {
+    if (!canOpenArticle()) return;
     router.push({ pathname: '/article/[id]', params: { id: article.id } });
   };
 
@@ -162,8 +175,30 @@ export default function HomeScreen() {
               </View>
             ) : null
           }
+          ListHeaderComponent={
+            activeSoftPrompt ? (
+              <SoftUpgradePrompt
+                trigger={activeSoftPrompt}
+                onDismiss={() => dismissSoftPrompt()}
+                onSeePlans={() => {
+                  dismissSoftPrompt();
+                  router.push('/subscription' as any);
+                }}
+              />
+            ) : null
+          }
         />
       ) : null}
+
+      <HardPaywall
+        visible={Boolean(pendingHardPaywall)}
+        reason={pendingHardPaywall}
+        onClose={clearHardPaywall}
+        onUpgrade={() => {
+          clearHardPaywall();
+          router.push('/subscription' as any);
+        }}
+      />
     </SafeAreaView>
   );
 }

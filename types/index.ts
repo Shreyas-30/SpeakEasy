@@ -1,3 +1,5 @@
+import type { SubscriptionEntitlement } from '@/src/config/subscriptionPlans';
+
 export type DifficultyLevel = 'Beginner' | 'Intermediate' | 'Advanced';
 export type NativeLanguage =
   | 'ar'
@@ -9,6 +11,17 @@ export type NativeLanguage =
   | 'ja'
   | 'fr'
   | 'de';
+
+export type ArticleEventType =
+  | 'article_open'
+  | 'article_like'
+  | 'article_save'
+  | 'article_share'
+  | 'full_article_open'
+  | 'listen_start'
+  | 'discuss_start'
+  | 'vocab_lookup'
+  | 'vocab_save';
 
 export interface Article {
   id: string;
@@ -60,4 +73,17 @@ export interface TtsVoiceOption {
   description?: string;
   previewUrl?: string;
   labels?: Record<string, string>;
+}
+
+export interface CloudAppState {
+  hasCompletedOnboarding?: boolean;
+  selectedTopics?: string[];
+  nativeLanguage?: NativeLanguage | null;
+  customTopics?: CustomTopic[];
+  savedArticles?: Article[];
+  likedArticles?: Article[];
+  savedVocab?: VocabWord[];
+  selectedVoiceId?: string | null;
+  selectedVoiceName?: string | null;
+  subscriptionEntitlement?: SubscriptionEntitlement;
 }
