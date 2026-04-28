@@ -2,10 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Easing,
   FlatList,
   Image,
   ImageSourcePropType,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -16,6 +16,8 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/colors';
 import { NICHE_SUGGESTIONS } from '@/constants/suggestions';
 import { TOPICS } from '@/constants/topics';
@@ -41,7 +43,6 @@ type LanguageOption = {
 
 type TopicVisual = {
   backgroundColor: string;
-  iconUrl?: string;
   fallbackIcon: keyof typeof Ionicons.glyphMap;
 };
 
@@ -98,62 +99,50 @@ const NATIVE_LANGUAGE_OPTIONS: LanguageOption[] = [
 const TOPIC_VISUALS: Record<string, TopicVisual> = {
   technology: {
     backgroundColor: '#E7EEF4',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/f8830e1a-49aa-4f9a-b9fd-5b8a97de9b09',
     fallbackIcon: 'desktop-outline',
   },
   sports: {
     backgroundColor: '#F4F0E8',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/0d6bc9fb-07cc-4856-8674-93e6b09b6e5b',
     fallbackIcon: 'football-outline',
   },
   food: {
     backgroundColor: '#F4ECE8',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/58ca7351-2f7f-4a4d-8ab7-478d4cf08069',
     fallbackIcon: 'restaurant-outline',
   },
   travel: {
     backgroundColor: '#E8F1F4',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/336f723a-fa6a-4981-976e-c50ce63427ed',
     fallbackIcon: 'airplane-outline',
   },
   music: {
     backgroundColor: '#ECE8F4',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/63f2318c-b279-49df-9396-57f694973aaa',
     fallbackIcon: 'musical-notes-outline',
   },
   science: {
     backgroundColor: '#ECF4E8',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/e06b3d55-ee73-4797-b687-96993106fae4',
     fallbackIcon: 'flask-outline',
   },
   health: {
     backgroundColor: '#F4F2E8',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/5f900ba0-d2b7-4eab-9868-4ea85f5cf965',
     fallbackIcon: 'barbell-outline',
   },
   business: {
     backgroundColor: '#F4E8E8',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/0115e651-cdbb-4b4a-a4e8-c7057c2ee91e',
     fallbackIcon: 'stats-chart-outline',
   },
   anime: {
     backgroundColor: '#E8F3F4',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/c2875fd0-6649-4a4f-ae26-8ed6e9a5e401',
     fallbackIcon: 'sparkles-outline',
   },
   gaming: {
     backgroundColor: '#E8ECF4',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/1e0776e0-2f77-478e-b841-668af5b9f8eb',
     fallbackIcon: 'game-controller-outline',
   },
   fashion: {
     backgroundColor: '#F4E8F3',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/eaf6f119-1c48-4f75-8669-1a389fcd3a0a',
     fallbackIcon: 'shirt-outline',
   },
   nature: {
     backgroundColor: '#EAF4E8',
-    iconUrl: 'https://www.figma.com/api/mcp/asset/243561c8-7e13-443d-8475-84034ca19581',
     fallbackIcon: 'leaf-outline',
   },
   arts: {
@@ -267,8 +256,41 @@ export default function OnboardingScreen() {
   } = useAppStore();
 
   const overlayOpacity = useRef(new Animated.Value(0)).current;
+  const introOpacity = useRef(new Animated.Value(1)).current;
+  const introTranslateX = useRef(new Animated.Value(0)).current;
   const searchTrimmed = search.trim();
   const searchLower = searchTrimmed.toLowerCase();
+  const activeIntroStep = INTRO_STEPS.find((step) => step.id === currentStep);
+  const activeIntroIndex = activeIntroStep
+    ? INTRO_STEPS.findIndex((step) => step.id === activeIntroStep.id)
+    : -1;
+  const previousIntroIndex = useRef(activeIntroIndex);
+
+  useEffect(() => {
+    if (!activeIntroStep || activeIntroIndex < 0) return;
+
+    const previousIndex = previousIntroIndex.current;
+    const isSameIntroStep = previousIndex === activeIntroIndex;
+    const direction = activeIntroIndex > previousIndex ? 1 : -1;
+    introOpacity.setValue(0);
+    introTranslateX.setValue(isSameIntroStep ? 0 : direction * 42);
+    previousIntroIndex.current = activeIntroIndex;
+
+    Animated.parallel([
+      Animated.timing(introOpacity, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(introTranslateX, {
+        toValue: 0,
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [activeIntroIndex, activeIntroStep, introOpacity, introTranslateX]);
 
   const filteredTopics = useMemo(() => {
     if (!searchLower) return TOPICS;
@@ -349,14 +371,14 @@ export default function OnboardingScreen() {
     const nextIntroStep = INTRO_STEPS[introIndex + 1];
 
     if (nextIntroStep) {
-      router.push({
+      router.replace({
         pathname: '/onboarding',
         params: { step: nextIntroStep.id },
       });
       return;
     }
 
-    router.push({
+    router.replace({
       pathname: '/onboarding',
       params: { step: 'language' },
     });
@@ -423,11 +445,7 @@ export default function OnboardingScreen() {
       >
         <View style={styles.topicCardRow}>
           <View style={styles.topicIconWrap}>
-            {visual.iconUrl ? (
-              <Image source={{ uri: visual.iconUrl }} style={styles.topicIcon} resizeMode="contain" />
-            ) : (
-              <Ionicons name={visual.fallbackIcon} size={22} color={Colors.text} />
-            )}
+            <Ionicons name={visual.fallbackIcon} size={24} color={Colors.text} />
           </View>
           <Text style={styles.topicCardTitle}>{item.name}</Text>
         </View>
@@ -441,11 +459,7 @@ export default function OnboardingScreen() {
     );
   };
 
-  const activeIntroStep = INTRO_STEPS.find((step) => step.id === currentStep);
-
   if (activeIntroStep) {
-    const activeIntroIndex = INTRO_STEPS.findIndex((step) => step.id === activeIntroStep.id);
-
     return (
       <SafeAreaView style={styles.introContainer}>
         <StatusBar barStyle="dark-content" />
@@ -453,18 +467,35 @@ export default function OnboardingScreen() {
         <View style={styles.introScreen}>
           <IntroStepIndicator activeIndex={activeIntroIndex} />
 
-          <View style={styles.introCopy}>
-            <Text style={styles.introTitle}>{activeIntroStep.title}</Text>
-            <Text style={styles.introSubtitle}>{activeIntroStep.subtitle}</Text>
-          </View>
+          <Animated.View
+            style={[
+              styles.introAnimatedContent,
+              {
+                opacity: introOpacity,
+                transform: [{ translateX: introTranslateX }],
+              },
+            ]}
+          >
+            <View style={styles.introCopy}>
+              <Text style={styles.introTitle}>{activeIntroStep.title}</Text>
+              <Text style={styles.introSubtitle}>{activeIntroStep.subtitle}</Text>
+            </View>
 
-          <View style={styles.introPreviewWrap}>
-            <Image
-              source={activeIntroStep.previewImage}
-              style={styles.introPreviewImage}
-              resizeMode="contain"
-            />
-          </View>
+            <View style={styles.introPreviewWrap}>
+              <Image
+                source={activeIntroStep.previewImage}
+                style={styles.introPreviewImage}
+                resizeMode="contain"
+              />
+            </View>
+          </Animated.View>
+
+          <LinearGradient
+            pointerEvents="none"
+            colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.96)', '#FFFFFF', '#FFFFFF']}
+            locations={[0, 0.3, 0.48, 1]}
+            style={styles.introFooterGradient}
+          />
 
           <View style={styles.introFooter}>
             <TouchableOpacity
@@ -736,6 +767,9 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 22,
   },
+  introAnimatedContent: {
+    flex: 1,
+  },
   introIndicator: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -783,8 +817,20 @@ const styles = StyleSheet.create({
     maxWidth: 320,
     height: 560,
   },
+  introFooterGradient: {
+    position: 'absolute',
+    left: -22,
+    right: -22,
+    bottom: -72,
+    height: 360,
+    zIndex: 1,
+  },
   introFooter: {
-    paddingBottom: 18,
+    position: 'absolute',
+    left: 10,
+    right: 10,
+    bottom: 18,
+    zIndex: 2,
   },
   screenInner: {
     flex: 1,
@@ -1029,10 +1075,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.42)',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  topicIcon: {
-    width: 28,
-    height: 28,
   },
   topicCardTitle: {
     flex: 1,

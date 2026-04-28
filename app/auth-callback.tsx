@@ -1,17 +1,18 @@
 import React from 'react';
 import {
   ActivityIndicator,
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
+import { consumePendingSubscriptionIntent } from '@/services/subscriptionService';
 import { useAuthStore } from '@/store/useAuthStore';
 
 export default function AuthCallbackScreen() {
@@ -35,7 +36,23 @@ export default function AuthCallbackScreen() {
 
   React.useEffect(() => {
     if (user || session?.user) {
-      router.replace('/(tabs)/settings');
+      const routeAfterConfirmation = async () => {
+        const pendingIntent = await consumePendingSubscriptionIntent();
+        if (pendingIntent) {
+          router.replace({
+            pathname: '/subscription',
+            params: {
+              intent: pendingIntent.intent,
+              planId: pendingIntent.planId,
+            },
+          });
+          return;
+        }
+
+        router.replace('/(tabs)/settings');
+      };
+
+      void routeAfterConfirmation();
     }
   }, [session?.user, user]);
 

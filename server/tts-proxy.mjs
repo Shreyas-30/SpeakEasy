@@ -19,6 +19,9 @@ const GNEWS_KEY = process.env.GNEWS_KEY ?? process.env.EXPO_PUBLIC_GNEWS_KEY ?? 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 const OPENAI_TRANSLATION_MODEL = process.env.OPENAI_TRANSLATION_MODEL ?? 'gpt-4.1-mini';
 const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL ?? 'gpt-4o-mini';
+const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').replace(/\/$/, '');
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const translationCacheDir = resolve(__dirname, '.cache', 'translate');
 const GUARDIAN_BASE = 'https://content.guardianapis.com';
 const GNEWS_BASE = 'https://gnews.io/api/v4';
@@ -141,7 +144,7 @@ const PLACEHOLDER_TIMES = ['Just now', '1 hour ago', '3 hours ago'];
 
 function applyCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', ALLOW_ORIGIN);
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
 }
 
@@ -368,6 +371,103 @@ async function readJsonBody(req) {
   return raw ? JSON.parse(raw) : {};
 }
 
+function getBearerToken(req) {
+  const authHeader = req.headers.authorization ?? '';
+  if (!authHeader.toLowerCase().startsWith('bearer ')) return '';
+  return authHeader.slice(7).trim();
+}
+
+function mapSubscriptionRow(row) {
+  return {
+    planId: row?.plan_id ?? 'free',
+    status: row?.status ?? 'free',
+    provider: row?.provider ?? 'mock',
+    renewsAt: row?.renews_at ?? null,
+    updatedAt: row?.updated_at ?? null,
+  };
+}
+
+async function requireSupabaseUser(req) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error(
+      'Missing Supabase backend configuration. Add SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY.',
+    );
+  }
+
+  const token = getBearerToken(req);
+  if (!token) {
+    const error = new Error('Missing authorization token');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = new Error('Invalid authorization token');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  return response.json();
+}
+
+async function grantMockSubscriptionEntitlement(req, planId) {
+  const user = await requireSupabaseUser(req);
+  const now = new Date().toISOString();
+  const entitlementRow = {
+    user_id: user.id,
+    plan_id: planId,
+    status: 'active',
+    provider: 'mock',
+    renews_at: null,
+    updated_at: now,
+  };
+
+  const entitlementResponse = await fetch(
+    `${SUPABASE_URL}/rest/v1/subscription_entitlements?on_conflict=user_id`,
+    {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates,return=representation',
+      },
+      body: JSON.stringify(entitlementRow),
+    },
+  );
+
+  if (!entitlementResponse.ok) {
+    const errorText = await entitlementResponse.text();
+    throw new Error(`Supabase entitlement update failed: ${errorText.slice(0, 300)}`);
+  }
+
+  await fetch(`${SUPABASE_URL}/rest/v1/subscription_events`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      user_id: user.id,
+      event_type: 'mock_entitlement_granted',
+      plan_id: planId,
+      source: 'backend',
+      metadata: { provider: 'mock' },
+    }),
+  });
+
+  const [row] = await entitlementResponse.json();
+  return mapSubscriptionRow(row);
+}
+
 function buildCacheId({ text, voiceId, modelId }) {
   return createHash('sha256')
     .update(JSON.stringify({ text, voiceId, modelId }))
@@ -555,6 +655,34 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       sendJson(res, 500, {
         error: error instanceof Error ? error.message : 'Unable to load feed articles',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/subscription/mock-upgrade') {
+    try {
+      const body = await readJsonBody(req);
+      const planId = String(body.planId || '').trim();
+
+      if (!['plus', 'pro'].includes(planId)) {
+        sendJson(res, 400, { error: 'planId must be plus or pro' });
+        return;
+      }
+
+      const entitlement = await grantMockSubscriptionEntitlement(req, planId);
+      sendJson(res, 200, { entitlement });
+    } catch (error) {
+      const statusCode =
+        typeof error === 'object' &&
+        error !== null &&
+        'statusCode' in error &&
+        typeof error.statusCode === 'number'
+          ? error.statusCode
+          : 500;
+
+      sendJson(res, statusCode, {
+        error: error instanceof Error ? error.message : 'Unable to update subscription',
       });
     }
     return;

@@ -12,12 +12,14 @@ type SubscriptionPlan = (typeof SUBSCRIPTION_PLANS)[number];
 interface SubscriptionPlanCardProps {
   plan: SubscriptionPlan;
   currentPlanId: SubscriptionPlanId;
+  isLoading?: boolean;
   onSelectPlan: (planId: SubscriptionPlanId) => void;
 }
 
 export function SubscriptionPlanCard({
   plan,
   currentPlanId,
+  isLoading = false,
   onSelectPlan,
 }: SubscriptionPlanCardProps) {
   const isCurrent = plan.id === currentPlanId;
@@ -28,6 +30,7 @@ export function SubscriptionPlanCard({
       style={[styles.card, plan.recommended && styles.recommendedCard]}
       onPress={() => onSelectPlan(plan.id)}
       activeOpacity={0.86}
+      disabled={isLoading || isCurrent || plan.id === 'free'}
     >
       <View style={styles.headerRow}>
         <View>

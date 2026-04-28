@@ -110,8 +110,10 @@ interface AppState {
   saveVocabWord: (word: VocabWord) => void;
   removeVocabWord: (wordId: string) => void;
   setSelectedVoice: (voice: TtsVoiceOption) => void;
-  requestPlanUpgrade: (planId: SubscriptionEntitlement['planId']) => Promise<void>;
-  restoreSubscription: () => Promise<void>;
+  requestPlanUpgrade: (
+    planId: SubscriptionEntitlement['planId'],
+  ) => Promise<SubscriptionEntitlement | null>;
+  restoreSubscription: () => Promise<SubscriptionEntitlement | null>;
   applySubscriptionEntitlement: (entitlement: SubscriptionEntitlement) => void;
   clearHardPaywall: () => void;
   dismissSoftPrompt: (trigger?: SoftPromptTrigger) => void;
@@ -299,26 +301,40 @@ export const useAppStore = create<AppState>()(
 
       requestPlanUpgrade: async (planId) => {
         set({ isRefreshingEntitlement: true });
-        const entitlement = await requestSubscriptionUpgrade(planId);
+        try {
+          const entitlement = await requestSubscriptionUpgrade(planId);
 
-        set((state) => ({
-          isRefreshingEntitlement: false,
-          subscriptionEntitlement: entitlement ?? state.subscriptionEntitlement,
-          pendingHardPaywall: entitlement ? null : state.pendingHardPaywall,
-          activeSoftPrompt: entitlement ? null : state.activeSoftPrompt,
-        }));
+          set((state) => ({
+            isRefreshingEntitlement: false,
+            subscriptionEntitlement: entitlement ?? state.subscriptionEntitlement,
+            pendingHardPaywall: entitlement ? null : state.pendingHardPaywall,
+            activeSoftPrompt: entitlement ? null : state.activeSoftPrompt,
+          }));
+
+          return entitlement;
+        } catch (error) {
+          set({ isRefreshingEntitlement: false });
+          throw error;
+        }
       },
 
       restoreSubscription: async () => {
         set({ isRefreshingEntitlement: true });
-        const entitlement = await restoreSubscriptionEntitlement();
+        try {
+          const entitlement = await restoreSubscriptionEntitlement();
 
-        set((state) => ({
-          isRefreshingEntitlement: false,
-          subscriptionEntitlement: entitlement ?? state.subscriptionEntitlement,
-          pendingHardPaywall: entitlement ? null : state.pendingHardPaywall,
-          activeSoftPrompt: entitlement ? null : state.activeSoftPrompt,
-        }));
+          set((state) => ({
+            isRefreshingEntitlement: false,
+            subscriptionEntitlement: entitlement ?? state.subscriptionEntitlement,
+            pendingHardPaywall: entitlement ? null : state.pendingHardPaywall,
+            activeSoftPrompt: entitlement ? null : state.activeSoftPrompt,
+          }));
+
+          return entitlement;
+        } catch (error) {
+          set({ isRefreshingEntitlement: false });
+          throw error;
+        }
       },
 
       applySubscriptionEntitlement: (entitlement) => {

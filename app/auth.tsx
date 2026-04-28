@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
@@ -11,26 +10,63 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { router } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { isSupabaseConfigured } from '@/services/supabaseClient';
+import { consumePendingSubscriptionIntent } from '@/services/subscriptionService';
 import { useAuthStore } from '@/store/useAuthStore';
 
 export default function AuthScreen() {
+  const params = useLocalSearchParams<{
+    returnTo?: string;
+    intent?: string;
+    planId?: string;
+  }>();
   const [mode, setMode] = React.useState<'sign-in' | 'sign-up'>('sign-in');
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const { error, isLoading, user, signInWithEmail, signUpWithEmail } = useAuthStore();
+  const hasHandledAuthenticatedRedirect = React.useRef(false);
 
   const isSignUp = mode === 'sign-up';
   const canSubmit = email.trim().length > 3 && password.length >= 6 && !isLoading;
 
   React.useEffect(() => {
-    if (user) {
+    if (!user || hasHandledAuthenticatedRedirect.current) return;
+
+    hasHandledAuthenticatedRedirect.current = true;
+
+    const redirectAfterAuth = async () => {
+      if (params.returnTo === 'subscription') {
+        router.replace({
+          pathname: '/subscription',
+          params: {
+            intent: params.intent,
+            planId: params.planId,
+          },
+        });
+        return;
+      }
+
+      const pendingIntent = await consumePendingSubscriptionIntent();
+      if (pendingIntent) {
+        router.replace({
+          pathname: '/subscription',
+          params: {
+            intent: pendingIntent.intent,
+            planId: pendingIntent.planId,
+          },
+        });
+        return;
+      }
+
       router.replace('/(tabs)/settings');
-    }
-  }, [user]);
+    };
+
+    void redirectAfterAuth();
+  }, [params.intent, params.planId, params.returnTo, user]);
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
