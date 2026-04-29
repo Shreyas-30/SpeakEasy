@@ -77,7 +77,7 @@ export default function DiscussScreen() {
     sendRealtimeEvent({
       type: 'response.create',
       response: {
-        modalities: ['audio', 'text'],
+        output_modalities: ['audio'],
         ...(instructions ? { instructions } : {}),
       },
     });
