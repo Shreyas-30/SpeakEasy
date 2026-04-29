@@ -19,42 +19,68 @@ export default function AuthCallbackScreen() {
   const url = Linking.useURL();
   const { clearAuthError, error, handleAuthRedirect, isLoading, session, user } = useAuthStore();
   const handledUrlRef = React.useRef<string | null>(null);
+  const hasRoutedRef = React.useRef(false);
+
+  const routeAfterConfirmation = React.useCallback(async () => {
+    if (hasRoutedRef.current) return;
+    hasRoutedRef.current = true;
+
+    const pendingIntent = await consumePendingSubscriptionIntent();
+    if (pendingIntent) {
+      router.replace({
+        pathname: '/subscription',
+        params: {
+          intent: pendingIntent.intent,
+          planId: pendingIntent.planId,
+        },
+      });
+      return;
+    }
+
+    router.replace('/(tabs)/settings');
+  }, []);
 
   React.useEffect(() => {
     clearAuthError();
+  }, [clearAuthError]);
+
+  React.useEffect(() => {
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const handleCallbackUrl = async (urlToHandle: string) => {
+      if (handledUrlRef.current === urlToHandle) return;
+      handledUrlRef.current = urlToHandle;
+
+      const didConfirm = await handleAuthRedirect(urlToHandle);
+      if (didConfirm) {
+        await routeAfterConfirmation();
+      }
+    };
 
     const confirmFromUrl = async () => {
       const nextUrl = url ?? (await Linking.getInitialURL());
-      if (!nextUrl || handledUrlRef.current === nextUrl) return;
+      if (nextUrl) {
+        await handleCallbackUrl(nextUrl);
+        return;
+      }
 
-      handledUrlRef.current = nextUrl;
-      await handleAuthRedirect(nextUrl);
+      fallbackTimer = setTimeout(() => {
+        void handleCallbackUrl('speakeasy://auth-callback');
+      }, 900);
     };
 
     void confirmFromUrl();
-  }, [clearAuthError, handleAuthRedirect, url]);
+
+    return () => {
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+    };
+  }, [handleAuthRedirect, routeAfterConfirmation, url]);
 
   React.useEffect(() => {
     if (user || session?.user) {
-      const routeAfterConfirmation = async () => {
-        const pendingIntent = await consumePendingSubscriptionIntent();
-        if (pendingIntent) {
-          router.replace({
-            pathname: '/subscription',
-            params: {
-              intent: pendingIntent.intent,
-              planId: pendingIntent.planId,
-            },
-          });
-          return;
-        }
-
-        router.replace('/(tabs)/settings');
-      };
-
       void routeAfterConfirmation();
     }
-  }, [session?.user, user]);
+  }, [routeAfterConfirmation, session?.user, user]);
 
   const hasAuthenticated = Boolean(user || session?.user);
   const visibleError = hasAuthenticated ? null : error;
@@ -91,6 +117,21 @@ export default function AuthCallbackScreen() {
             activeOpacity={0.88}
           >
             <Text style={styles.primaryButtonText}>Back to sign in</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {!isLoading && !visibleError && !hasAuthenticated ? (
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={async () => {
+              const didConfirm = await handleAuthRedirect('speakeasy://auth-callback');
+              if (didConfirm) {
+                await routeAfterConfirmation();
+              }
+            }}
+            activeOpacity={0.88}
+          >
+            <Text style={styles.primaryButtonText}>Continue</Text>
           </TouchableOpacity>
         ) : null}
       </View>

@@ -161,7 +161,7 @@ export default function SavedScreen() {
   const hasExtraVocab = savedVocab.length > 6;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar barStyle="dark-content" />
 
       {/* Header */}

@@ -22,7 +22,7 @@ interface AuthState {
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   syncCurrentUserData: () => Promise<void>;
-  handleAuthRedirect: (url: string) => Promise<void>;
+  handleAuthRedirect: (url: string) => Promise<boolean>;
   clearAuthError: () => void;
 }
 
@@ -163,7 +163,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   handleAuthRedirect: async (url) => {
     if (!supabase) {
       set({ error: getSupabaseConfigError(), isLoading: false });
-      return;
+      return false;
     }
 
     set({ isLoading: true, error: null });
@@ -190,7 +190,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
         set({ session: data.session, user: data.session?.user ?? null, isLoading: false });
         await reconcileCloudState();
-        return;
+        return Boolean(data.session?.user);
       }
 
       if (code) {
@@ -200,7 +200,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
         set({ session: data.session, user: data.session?.user ?? null, isLoading: false });
         await reconcileCloudState();
-        return;
+        return Boolean(data.session?.user);
       }
 
       if (tokenHash && type) {
@@ -213,7 +213,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
         set({ session: data.session, user: data.user, isLoading: false });
         await reconcileCloudState();
-        return;
+        return Boolean(data.user);
       }
 
       const { data, error } = await supabase.auth.getSession();
@@ -228,13 +228,14 @@ export const useAuthStore = create<AuthState>((set) => ({
           error: null,
         });
         await reconcileCloudState();
-        return;
+        return true;
       }
 
       set({
         isLoading: false,
         error: 'This confirmation link did not include a valid login token.',
       });
+      return false;
     } catch (error) {
       const { data } = await supabase.auth.getSession();
 
@@ -246,13 +247,14 @@ export const useAuthStore = create<AuthState>((set) => ({
           error: null,
         });
         await reconcileCloudState();
-        return;
+        return true;
       }
 
       set({
         isLoading: false,
         error: error instanceof Error ? error.message : 'Unable to confirm your email.',
       });
+      return false;
     }
   },
 

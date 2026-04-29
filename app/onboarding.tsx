@@ -12,6 +12,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -241,6 +242,7 @@ export default function OnboardingScreen() {
 
   const [search, setSearch] = useState('');
   const [isBuilding, setIsBuilding] = useState(false);
+  const { width: windowWidth } = useWindowDimensions();
 
   const {
     hasCompletedOnboarding,
@@ -256,41 +258,34 @@ export default function OnboardingScreen() {
   } = useAppStore();
 
   const overlayOpacity = useRef(new Animated.Value(0)).current;
-  const introOpacity = useRef(new Animated.Value(1)).current;
-  const introTranslateX = useRef(new Animated.Value(0)).current;
+  const introSlideX = useRef(new Animated.Value(0)).current;
   const searchTrimmed = search.trim();
   const searchLower = searchTrimmed.toLowerCase();
   const activeIntroStep = INTRO_STEPS.find((step) => step.id === currentStep);
   const activeIntroIndex = activeIntroStep
     ? INTRO_STEPS.findIndex((step) => step.id === activeIntroStep.id)
     : -1;
-  const previousIntroIndex = useRef(activeIntroIndex);
+  const introViewportWidth = Math.max(windowWidth - 44, 0);
+  const hasMountedIntroTransition = useRef(false);
 
   useEffect(() => {
-    if (!activeIntroStep || activeIntroIndex < 0) return;
+    if (!activeIntroStep || activeIntroIndex < 0 || introViewportWidth <= 0) return;
 
-    const previousIndex = previousIntroIndex.current;
-    const isSameIntroStep = previousIndex === activeIntroIndex;
-    const direction = activeIntroIndex > previousIndex ? 1 : -1;
-    introOpacity.setValue(0);
-    introTranslateX.setValue(isSameIntroStep ? 0 : direction * 42);
-    previousIntroIndex.current = activeIntroIndex;
+    const nextOffset = -activeIntroIndex * introViewportWidth;
 
-    Animated.parallel([
-      Animated.timing(introOpacity, {
-        toValue: 1,
-        duration: 220,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(introTranslateX, {
-        toValue: 0,
-        duration: 300,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [activeIntroIndex, activeIntroStep, introOpacity, introTranslateX]);
+    if (!hasMountedIntroTransition.current) {
+      introSlideX.setValue(nextOffset);
+      hasMountedIntroTransition.current = true;
+      return;
+    }
+
+    Animated.timing(introSlideX, {
+      toValue: nextOffset,
+      duration: 360,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [activeIntroIndex, activeIntroStep, introSlideX, introViewportWidth]);
 
   const filteredTopics = useMemo(() => {
     if (!searchLower) return TOPICS;
@@ -467,28 +462,37 @@ export default function OnboardingScreen() {
         <View style={styles.introScreen}>
           <IntroStepIndicator activeIndex={activeIntroIndex} />
 
-          <Animated.View
-            style={[
-              styles.introAnimatedContent,
-              {
-                opacity: introOpacity,
-                transform: [{ translateX: introTranslateX }],
-              },
-            ]}
-          >
-            <View style={styles.introCopy}>
-              <Text style={styles.introTitle}>{activeIntroStep.title}</Text>
-              <Text style={styles.introSubtitle}>{activeIntroStep.subtitle}</Text>
-            </View>
+          <View style={styles.introViewport}>
+            <Animated.View
+              style={[
+                styles.introTrack,
+                {
+                  width: introViewportWidth * INTRO_STEPS.length,
+                  transform: [{ translateX: introSlideX }],
+                },
+              ]}
+            >
+              {INTRO_STEPS.map((step) => (
+                <View
+                  key={step.id}
+                  style={[styles.introSlide, { width: introViewportWidth }]}
+                >
+                  <View style={styles.introCopy}>
+                    <Text style={styles.introTitle}>{step.title}</Text>
+                    <Text style={styles.introSubtitle}>{step.subtitle}</Text>
+                  </View>
 
-            <View style={styles.introPreviewWrap}>
-              <Image
-                source={activeIntroStep.previewImage}
-                style={styles.introPreviewImage}
-                resizeMode="contain"
-              />
-            </View>
-          </Animated.View>
+                  <View style={styles.introPreviewWrap}>
+                    <Image
+                      source={step.previewImage}
+                      style={styles.introPreviewImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+                </View>
+              ))}
+            </Animated.View>
+          </View>
 
           <LinearGradient
             pointerEvents="none"
@@ -767,7 +771,15 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 22,
   },
-  introAnimatedContent: {
+  introViewport: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  introTrack: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  introSlide: {
     flex: 1,
   },
   introIndicator: {

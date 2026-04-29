@@ -1,8 +1,6 @@
 import React from 'react';
 import {
   ActivityIndicator,
-  Animated,
-  Easing,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -13,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
+import ConfettiCannon from 'react-native-confetti-cannon';
 import { Colors } from '@/constants/colors';
 import { SubscriptionPlanCard } from '@/components/SubscriptionPlanCard';
 import { useAppStore } from '@/store/useAppStore';
@@ -29,59 +28,6 @@ import {
 } from '@/services/subscriptionService';
 
 const CONFETTI_COLORS = ['#5C5A35', '#B8B59A', '#E7D9A8', '#7E9F6E', '#D7A86E'];
-
-function ConfettiBurst() {
-  const progress = React.useRef(new Animated.Value(0)).current;
-
-  React.useEffect(() => {
-    progress.setValue(0);
-    Animated.timing(progress, {
-      toValue: 1,
-      duration: 1050,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [progress]);
-
-  return (
-    <View pointerEvents="none" style={styles.confettiLayer}>
-      {Array.from({ length: 22 }).map((_, index) => {
-        const angle = (Math.PI * 2 * index) / 22;
-        const radius = 80 + (index % 5) * 18;
-        const translateX = progress.interpolate({
-          inputRange: [0, 1],
-          outputRange: [0, Math.cos(angle) * radius],
-        });
-        const translateY = progress.interpolate({
-          inputRange: [0, 1],
-          outputRange: [0, Math.sin(angle) * radius + 42],
-        });
-        const opacity = progress.interpolate({
-          inputRange: [0, 0.75, 1],
-          outputRange: [1, 1, 0],
-        });
-        const rotate = progress.interpolate({
-          inputRange: [0, 1],
-          outputRange: ['0deg', `${120 + index * 24}deg`],
-        });
-
-        return (
-          <Animated.View
-            key={index}
-            style={[
-              styles.confettiPiece,
-              {
-                backgroundColor: CONFETTI_COLORS[index % CONFETTI_COLORS.length],
-                opacity,
-                transform: [{ translateX }, { translateY }, { rotate }],
-              },
-            ]}
-          />
-        );
-      })}
-    </View>
-  );
-}
 
 function normalizePlanId(planId?: string | string[]): SubscriptionPlanId | null {
   const value = Array.isArray(planId) ? planId[0] : planId;
@@ -101,6 +47,7 @@ export default function SubscriptionScreen() {
   } = useAppStore();
   const user = useAuthStore((state) => state.user);
   const currentPlan = getPlanById(subscriptionEntitlement.planId);
+  const hasPreviewOrPaidPlan = subscriptionEntitlement.planId !== 'free';
   const [statusMessage, setStatusMessage] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [successPlanId, setSuccessPlanId] = React.useState<SubscriptionPlanId | null>(null);
@@ -226,7 +173,17 @@ export default function SubscriptionScreen() {
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" />
         <View style={styles.successScreen}>
-          <ConfettiBurst />
+          <View pointerEvents="none" style={styles.confettiLayer}>
+            <ConfettiCannon
+              count={170}
+              origin={{ x: -24, y: 0 }}
+              fadeOut
+              fallSpeed={2600}
+              explosionSpeed={420}
+              colors={CONFETTI_COLORS}
+              autoStart
+            />
+          </View>
           <View style={styles.successIcon}>
             <Ionicons name="checkmark" size={34} color="#FFFFFF" />
           </View>
@@ -280,27 +237,33 @@ export default function SubscriptionScreen() {
 
         <View style={styles.noticeCard}>
           <Text style={styles.noticeTitle}>
-            {isRefreshingEntitlement ? 'Checking your plan...' : 'Paid plans are coming soon'}
+            {isRefreshingEntitlement
+              ? 'Checking your plan...'
+              : hasPreviewOrPaidPlan
+                ? `${currentPlan.name} preview access is active`
+                : 'Paid plans are coming soon'}
           </Text>
           <Text style={styles.noticeText}>
-            For early testers, choosing a paid plan unlocks preview access while billing is not
-            live yet. When subscriptions launch, you will be able to manage purchases securely
-            through your app store account.
+            {hasPreviewOrPaidPlan
+              ? `You have preview access to ${currentPlan.name} while subscriptions are being finished. When billing launches, you will be able to manage purchases securely through your app store account.`
+              : 'For early testers, choosing a paid plan unlocks preview access while billing is not live yet. When subscriptions launch, you will be able to manage purchases securely through your app store account.'}
           </Text>
-          <TouchableOpacity
-            style={styles.restoreButton}
-            onPress={handleRestore}
-            activeOpacity={0.85}
-            disabled={isRefreshingEntitlement}
-          >
-            {isRefreshingEntitlement ? (
-              <ActivityIndicator size="small" color="#66643B" />
-            ) : (
-              <Text style={styles.restoreButtonText}>
-                {user ? 'Restore purchases' : 'Sign in to restore'}
-              </Text>
-            )}
-          </TouchableOpacity>
+          {!hasPreviewOrPaidPlan ? (
+            <TouchableOpacity
+              style={styles.restoreButton}
+              onPress={handleRestore}
+              activeOpacity={0.85}
+              disabled={isRefreshingEntitlement}
+            >
+              {isRefreshingEntitlement ? (
+                <ActivityIndicator size="small" color="#66643B" />
+              ) : (
+                <Text style={styles.restoreButtonText}>
+                  {user ? 'Restore purchases' : 'Sign in to restore'}
+                </Text>
+              )}
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {statusMessage ? <Text style={styles.statusMessage}>{statusMessage}</Text> : null}
@@ -490,15 +453,9 @@ const styles = StyleSheet.create({
   },
   confettiLayer: {
     position: 'absolute',
-    top: '42%',
-    left: '50%',
-    width: 1,
-    height: 1,
-  },
-  confettiPiece: {
-    position: 'absolute',
-    width: 8,
-    height: 14,
-    borderRadius: 3,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
 });

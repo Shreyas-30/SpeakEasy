@@ -124,7 +124,7 @@ export default function HomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar barStyle="dark-content" />
 
       <View style={styles.header}>
@@ -226,7 +226,7 @@ const styles = StyleSheet.create({
   list: {
     paddingHorizontal: 12,
     paddingTop: 8,
-    paddingBottom: 26,
+    paddingBottom: 14,
     gap: 15,
   },
   card: {

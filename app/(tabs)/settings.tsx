@@ -217,7 +217,7 @@ export default function SettingsScreen() {
   }, [isVoicePickerEnabled, selectedVoiceId, selectedVoiceName, setSelectedVoice]);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar barStyle="dark-content" />
 
       {/* Header */}
