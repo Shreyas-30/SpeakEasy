@@ -14,6 +14,7 @@
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "SpeakEasy may request camera access through its voice conversation technology, but camera use is not required for English practice.",
         "NSMicrophoneUsageDescription": "SpeakEasy uses your microphone for live English speaking practice.",
         "NSPhotoLibraryUsageDescription": "SpeakEasy may access your photo library through third-party components."
       }
