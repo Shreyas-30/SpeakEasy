@@ -4,6 +4,7 @@ import {
   ArticleEventType,
   CloudAppState,
   CustomTopic,
+  DiscussionMessageRole,
   NativeLanguage,
   VocabWord,
 } from '@/types';
@@ -222,6 +223,53 @@ export async function logArticleEvent(
     event_type: eventType,
     metadata,
   });
+}
+
+export async function createDiscussionSession(article: Article): Promise<string | null> {
+  if (!supabase) return null;
+  const user = await getCurrentUser();
+  if (!user) return null;
+
+  const { data, error } = await supabase
+    .from('discussion_sessions')
+    .insert({
+      user_id: user.id,
+      article_id: article.id,
+      article_title: article.title,
+      article_source: article.source,
+      topic_id: article.topicId,
+      difficulty: article.difficulty,
+    })
+    .select('id')
+    .single();
+
+  if (error) {
+    console.warn('Unable to create discussion session:', error.message);
+    return null;
+  }
+
+  return data.id;
+}
+
+export async function saveDiscussionMessage(
+  sessionId: string | null,
+  role: DiscussionMessageRole,
+  content: string,
+): Promise<void> {
+  if (!supabase || !sessionId || !content.trim()) return;
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const { error } = await supabase.from('discussion_messages').insert({
+    session_id: sessionId,
+    user_id: user.id,
+    role,
+    content: content.trim(),
+  });
+
+  if (error) {
+    console.warn('Unable to save discussion message:', error.message);
+  }
 }
 
 export async function pushLocalStateToSupabase(state: SyncState): Promise<void> {

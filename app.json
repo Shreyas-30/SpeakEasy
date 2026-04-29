@@ -14,6 +14,7 @@
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
+        "NSMicrophoneUsageDescription": "SpeakEasy uses your microphone for live English speaking practice.",
         "NSPhotoLibraryUsageDescription": "SpeakEasy may access your photo library through third-party components."
       }
     },
@@ -50,8 +51,7 @@
           }
         }
       ],
-      "expo-audio",
-      "expo-speech-recognition"
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

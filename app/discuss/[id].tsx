@@ -1,39 +1,36 @@
 import { Colors } from '@/constants/colors';
-import { ChatMessage, getAIResponse } from '@/services/aiService';
-import {
-  getTtsMode,
-  requestSpeechUrl,
-  speakTextOnDevice,
-  stopDeviceSpeech,
-} from '@/services/ttsService';
-import { useAppStore } from '@/store/useAppStore';
+import { OPENAI_REALTIME_CONFIG, getSpeakingTutorVoice } from '@/constants/voice';
 import { SoftUpgradePrompt } from '@/components/SoftUpgradePrompt';
-import { Ionicons } from '@expo/vector-icons';
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
-import { router, useLocalSearchParams } from 'expo-router';
+import { createRealtimeConnection, requestRealtimeSession } from '@/services/realtimeService';
 import {
-  ExpoSpeechRecognitionModule,
-  useSpeechRecognitionEvent,
-} from 'expo-speech-recognition';
+  createDiscussionSession,
+  saveDiscussionMessage,
+} from '@/services/supabaseSyncService';
+import { useAppStore } from '@/store/useAppStore';
+import { DiscussionMessage } from '@/types';
+import { Ionicons } from '@expo/vector-icons';
+import { setAudioModeAsync } from 'expo-audio';
+import { router, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
+type RealtimeConnection = Awaited<ReturnType<typeof createRealtimeConnection>>;
+
+function createMessage(role: DiscussionMessage['role'], content: string): DiscussionMessage {
+  return {
+    id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    role,
+    content,
+  };
 }
 
 export default function DiscussScreen() {
@@ -41,166 +38,189 @@ export default function DiscussScreen() {
   const {
     articles,
     savedArticles,
-    selectedVoiceName,
     selectedVoiceId,
     activeSoftPrompt,
     dismissSoftPrompt,
   } = useAppStore();
 
   const article = [...articles, ...savedArticles].find((item) => item.id === id);
-  const tutorName = selectedVoiceName ?? 'Sophia';
+  const tutorVoice = getSpeakingTutorVoice(selectedVoiceId);
+  const tutorName = tutorVoice.name;
 
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [messages, setMessages] = useState<DiscussionMessage[]>([]);
+  const [isConnecting, setIsConnecting] = useState(true);
   const [isListening, setIsListening] = useState(false);
-  const [liveTranscript, setLiveTranscript] = useState('');
-  const [showTextInput, setShowTextInput] = useState(false);
-  const [hasStarted, setHasStarted] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [liveUserTranscript, setLiveUserTranscript] = useState('');
+  const [liveAssistantTranscript, setLiveAssistantTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const scrollViewRef = useRef<ScrollView>(null);
-  const player = useAudioPlayer(null, { downloadFirst: true, updateInterval: 250 });
-  const playerStatus = useAudioPlayerStatus(player);
+  const connectionRef = useRef<RealtimeConnection | null>(null);
+  const discussionSessionIdRef = useRef<string | null>(null);
+  const hasStartedRef = useRef(false);
+  const wrapUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hardStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Speech recognition events ──────────────────────────────────────────────
+  const appendFinalMessage = useCallback((role: DiscussionMessage['role'], content: string) => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    setMessages((current) => [...current, createMessage(role, trimmed)]);
+    void saveDiscussionMessage(discussionSessionIdRef.current, role, trimmed);
+  }, []);
 
-  useSpeechRecognitionEvent('start', () => setIsListening(true));
-  useSpeechRecognitionEvent('end', () => {
-    setIsListening(false);
-    setLiveTranscript('');
-  });
-  useSpeechRecognitionEvent('result', (event) => {
-    const transcript = event.results[0]?.transcript ?? '';
-    setLiveTranscript(transcript);
-    if (event.isFinal && transcript.trim()) {
-      void handleSend(transcript.trim());
-    }
-  });
-  useSpeechRecognitionEvent('error', () => {
-    setIsListening(false);
-    setLiveTranscript('');
-  });
+  const sendRealtimeEvent = useCallback((event: Record<string, unknown>) => {
+    connectionRef.current?.sendEvent(event);
+  }, []);
 
-  // ── TTS helpers ────────────────────────────────────────────────────────────
+  const requestAssistantResponse = useCallback((instructions?: string) => {
+    sendRealtimeEvent({
+      type: 'response.create',
+      response: {
+        modalities: ['audio', 'text'],
+        ...(instructions ? { instructions } : {}),
+      },
+    });
+  }, [sendRealtimeEvent]);
 
-  const speakMessage = useCallback(
-    async (text: string) => {
-      setIsSpeaking(true);
-      try {
-        if (getTtsMode() === 'elevenlabs-proxy') {
-          const url = await requestSpeechUrl(text, selectedVoiceId);
-          player.replace(url);
-          player.play();
-        } else {
-          await speakTextOnDevice(text, {
-            onDone: () => setIsSpeaking(false),
-            onError: () => setIsSpeaking(false),
-          });
-        }
-      } catch {
-        setIsSpeaking(false);
+  const handleRealtimeEvent = useCallback(
+    (event: any) => {
+      switch (event.type) {
+        case 'input_audio_buffer.speech_started':
+          setIsListening(true);
+          setLiveUserTranscript('');
+          break;
+        case 'input_audio_buffer.speech_stopped':
+          setIsListening(false);
+          break;
+        case 'conversation.item.input_audio_transcription.delta':
+        case 'response.audio_transcription.delta':
+          if (event.delta) {
+            setLiveUserTranscript((current) => `${current}${event.delta}`);
+          }
+          break;
+        case 'conversation.item.input_audio_transcription.completed':
+        case 'response.audio_transcription.done':
+          appendFinalMessage('user', event.transcript ?? liveUserTranscript);
+          setLiveUserTranscript('');
+          break;
+        case 'response.audio.started':
+          setIsSpeaking(true);
+          setLiveAssistantTranscript('');
+          break;
+        case 'response.audio_transcript.delta':
+        case 'response.output_text.delta':
+          if (event.delta) {
+            setIsSpeaking(true);
+            setLiveAssistantTranscript((current) => `${current}${event.delta}`);
+          }
+          break;
+        case 'response.audio_transcript.done':
+        case 'response.output_text.done':
+          appendFinalMessage('assistant', event.transcript ?? event.text ?? liveAssistantTranscript);
+          setLiveAssistantTranscript('');
+          break;
+        case 'response.done':
+          setIsSpeaking(false);
+          break;
+        case 'error':
+          setError(event.error?.message ?? 'Something went wrong with speaking practice.');
+          setIsConnecting(false);
+          setIsSpeaking(false);
+          setIsListening(false);
+          break;
       }
     },
-    [selectedVoiceId, player],
+    [appendFinalMessage, liveAssistantTranscript, liveUserTranscript],
   );
-
-  useEffect(() => {
-    if (getTtsMode() !== 'elevenlabs-proxy') return;
-    if (playerStatus.playing) {
-      setIsSpeaking(true);
-    } else if (playerStatus.didJustFinish) {
-      setIsSpeaking(false);
-    }
-  }, [playerStatus.playing, playerStatus.didJustFinish]);
-
-  // ── Scroll & cleanup ───────────────────────────────────────────────────────
 
   useEffect(() => {
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
     }, 100);
-  }, [messages]);
+  }, [messages, liveAssistantTranscript, liveUserTranscript]);
+
+  useEffect(() => {
+    void setAudioModeAsync({
+      allowsRecording: true,
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      interruptionMode: 'doNotMix',
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!article || hasStartedRef.current) return;
+    hasStartedRef.current = true;
+
+    let isMounted = true;
+
+    const startRealtimeConversation = async () => {
+      setIsConnecting(true);
+      setError(null);
+
+      try {
+        discussionSessionIdRef.current = await createDiscussionSession(article);
+        const session = await requestRealtimeSession(article, selectedVoiceId);
+        const connection = await createRealtimeConnection({
+          clientSecret: session.clientSecret,
+          model: session.model,
+          onEvent: handleRealtimeEvent,
+          onOpen: () => {
+            requestAssistantResponse(
+              `Start the conversation now. Welcome the learner, mention the article "${article.title}", and ask one simple opinion question.`,
+            );
+          },
+        });
+
+        if (!isMounted) {
+          connection.close();
+          return;
+        }
+
+        connectionRef.current = connection;
+        setIsConnecting(false);
+
+        wrapUpTimerRef.current = setTimeout(() => {
+          requestAssistantResponse(
+            'Begin a natural wrap-up. Ask one final reflection question or briefly summarize the learner’s practice, then close warmly.',
+          );
+        }, Math.max(OPENAI_REALTIME_CONFIG.sessionTargetMs - OPENAI_REALTIME_CONFIG.wrapUpWarningMs, 30_000));
+
+        hardStopTimerRef.current = setTimeout(() => {
+          requestAssistantResponse(
+            'Close the conversation now in one short sentence. Thank the learner and encourage them to practice again later.',
+          );
+        }, OPENAI_REALTIME_CONFIG.sessionHardLimitMs);
+      } catch (err) {
+        if (!isMounted) return;
+        console.warn('Realtime discuss failed:', err);
+        setError(err instanceof Error ? err.message : 'Unable to start speaking practice.');
+        setIsConnecting(false);
+      }
+    };
+
+    void startRealtimeConversation();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [article, handleRealtimeEvent, requestAssistantResponse, selectedVoiceId]);
 
   useEffect(() => {
     return () => {
-      void stopDeviceSpeech();
-      ExpoSpeechRecognitionModule.stop();
-      try { player.pause(); } catch {}
+      if (wrapUpTimerRef.current) clearTimeout(wrapUpTimerRef.current);
+      if (hardStopTimerRef.current) clearTimeout(hardStopTimerRef.current);
+      connectionRef.current?.close();
+      connectionRef.current = null;
+      void setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        shouldPlayInBackground: false,
+        interruptionMode: 'doNotMix',
+      });
     };
-  }, [player]);
-
-  // ── Opening message ────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    if (!article || hasStarted) return;
-    setHasStarted(true);
-    void sendOpeningMessage();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [article]);
-
-  const sendOpeningMessage = async () => {
-    if (!article) return;
-    setIsLoading(true);
-    setError(null);
-    try {
-      const aiText = await getAIResponse([], article.title, article.source, article.content, tutorName);
-      const aiMessage: Message = { id: `ai-${Date.now()}`, role: 'assistant', content: aiText };
-      setMessages([aiMessage]);
-      await speakMessage(aiText);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.log('DISCUSS ERROR:', msg);
-      setError(msg);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // ── Send message ───────────────────────────────────────────────────────────
-
-  const handleSend = async (text: string) => {
-    if (!text || isLoading || !article) return;
-
-    setInputText('');
-    setError(null);
-
-    const userMessage: Message = { id: `user-${Date.now()}`, role: 'user', content: text };
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
-    setIsLoading(true);
-
-    try {
-      const history: ChatMessage[] = updatedMessages.map((m) => ({ role: m.role, content: m.content }));
-      const aiText = await getAIResponse(history, article.title, article.source, article.content, tutorName);
-      const aiMessage: Message = { id: `ai-${Date.now()}`, role: 'assistant', content: aiText };
-      setMessages((prev) => [...prev, aiMessage]);
-      await speakMessage(aiText);
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // ── Mic button ─────────────────────────────────────────────────────────────
-
-  const handleMicPress = async () => {
-    if (isListening) {
-      ExpoSpeechRecognitionModule.stop();
-      return;
-    }
-    const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-    if (!granted) {
-      setError('Microphone permission is required to speak.');
-      return;
-    }
-    setLiveTranscript('');
-    ExpoSpeechRecognitionModule.start({ lang: 'en-US', interimResults: true });
-  };
-
-  // ── Empty state ────────────────────────────────────────────────────────────
+  }, []);
 
   if (!article) {
     return (
@@ -220,13 +240,10 @@ export default function DiscussScreen() {
     );
   }
 
-  const canSendText = inputText.trim().length > 0 && !isLoading;
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
 
-      {/* ── Header ── */}
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}
@@ -249,11 +266,10 @@ export default function DiscussScreen() {
         </View>
 
         <View style={styles.liveBadge}>
-          <Text style={styles.liveText}>• Live</Text>
+          <Text style={styles.liveText}>{isConnecting ? 'Connecting' : 'Live'}</Text>
         </View>
       </View>
 
-      {/* ── Article context strip ── */}
       <View style={styles.articleCard}>
         <Ionicons name="document-text-outline" size={14} color="#7A7663" />
         <Text style={styles.articleCardTitle} numberOfLines={1}>
@@ -274,137 +290,94 @@ export default function DiscussScreen() {
         </View>
       ) : null}
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.messagesList}
+        contentContainerStyle={styles.messagesContent}
+        showsVerticalScrollIndicator={false}
       >
-        {/* ── Messages ── */}
-        <ScrollView
-          ref={scrollViewRef}
-          style={styles.messagesList}
-          contentContainerStyle={styles.messagesContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {messages.length === 0 && isLoading && (
-            <View style={styles.aiRow}>
+        {isConnecting ? (
+          <View style={styles.aiRow}>
+            <View style={styles.avatarSmall}>
+              <Ionicons name="happy-outline" size={14} color="#6A6840" />
+            </View>
+            <View style={styles.aiBubble}>
+              <ActivityIndicator size="small" color="#66643B" />
+            </View>
+          </View>
+        ) : null}
+
+        {messages.map((msg) => (
+          <View
+            key={msg.id}
+            style={[styles.messageRow, msg.role === 'user' ? styles.userRow : styles.aiRow]}
+          >
+            {msg.role === 'assistant' && (
               <View style={styles.avatarSmall}>
                 <Ionicons name="happy-outline" size={14} color="#6A6840" />
               </View>
-              <View style={styles.aiBubble}>
-                <ActivityIndicator size="small" color="#66643B" />
-              </View>
-            </View>
-          )}
-
-          {messages.map((msg) => (
-            <View
-              key={msg.id}
-              style={[styles.messageRow, msg.role === 'user' ? styles.userRow : styles.aiRow]}
-            >
-              {msg.role === 'assistant' && (
-                <View style={styles.avatarSmall}>
-                  <Ionicons name="happy-outline" size={14} color="#6A6840" />
-                </View>
-              )}
-              <View style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.aiBubble]}>
-                <Text style={[styles.bubbleText, msg.role === 'user' ? styles.userBubbleText : styles.aiBubbleText]}>
-                  {msg.content}
-                </Text>
-              </View>
-            </View>
-          ))}
-
-          {isLoading && messages.length > 0 && (
-            <View style={[styles.messageRow, styles.aiRow]}>
-              <View style={styles.avatarSmall}>
-                <Ionicons name="happy-outline" size={14} color="#6A6840" />
-              </View>
-              <View style={[styles.aiBubble, styles.thinkingBubble]}>
-                <ActivityIndicator size="small" color="#66643B" />
-              </View>
-            </View>
-          )}
-
-          {error != null && <Text style={styles.errorText}>{error}</Text>}
-        </ScrollView>
-
-        {/* ── Input area ── */}
-        <View style={styles.inputArea}>
-
-          {/* Live transcript preview */}
-          {isListening && (
-            <View style={styles.transcriptBanner}>
-              <Text style={styles.transcriptText} numberOfLines={2}>
-                {liveTranscript || 'Listening...'}
+            )}
+            <View style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.aiBubble]}>
+              <Text style={[styles.bubbleText, msg.role === 'user' ? styles.userBubbleText : styles.aiBubbleText]}>
+                {msg.content}
               </Text>
             </View>
-          )}
+          </View>
+        ))}
 
-          {/* Text input row — shown when keyboard mode toggled */}
-          {showTextInput && (
-            <View style={styles.textRow}>
-              <TextInput
-                style={styles.input}
-                value={inputText}
-                onChangeText={setInputText}
-                placeholder="Type your response..."
-                placeholderTextColor="rgba(0,0,0,0.35)"
-                multiline
-                maxLength={500}
-                autoFocus
-                returnKeyType="send"
-                onSubmitEditing={() => { if (canSendText) void handleSend(inputText.trim()); }}
-              />
-              <TouchableOpacity
-                style={[styles.sendButton, !canSendText && styles.sendButtonDisabled]}
-                onPress={() => { if (canSendText) void handleSend(inputText.trim()); }}
-                disabled={!canSendText}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="arrow-up" size={20} color={canSendText ? '#FFFFFF' : 'rgba(0,0,0,0.3)'} />
-              </TouchableOpacity>
+        {liveAssistantTranscript ? (
+          <View style={[styles.messageRow, styles.aiRow]}>
+            <View style={styles.avatarSmall}>
+              <Ionicons name="happy-outline" size={14} color="#6A6840" />
             </View>
-          )}
+            <View style={[styles.bubble, styles.aiBubble, styles.liveBubble]}>
+              <Text style={[styles.bubbleText, styles.aiBubbleText]}>{liveAssistantTranscript}</Text>
+            </View>
+          </View>
+        ) : null}
 
-          {/* Mic dock */}
-          <View style={styles.micDock}>
-            {/* Keyboard toggle */}
-            <TouchableOpacity
-              style={styles.secondaryAction}
-              onPress={() => setShowTextInput((v) => !v)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons
-                name={showTextInput ? 'mic-outline' : 'create-outline'}
-                size={22}
-                color="#7A7663"
-              />
-            </TouchableOpacity>
+        {error != null && <Text style={styles.errorText}>{error}</Text>}
+      </ScrollView>
 
-            {/* Primary mic button */}
-            <TouchableOpacity
-              style={[styles.micButton, isListening && styles.micButtonActive, isLoading && styles.micButtonDisabled]}
-              onPress={handleMicPress}
-              disabled={isLoading}
-              activeOpacity={0.85}
-            >
-              <Ionicons
-                name={isListening ? 'stop' : 'mic'}
-                size={30}
-                color={isLoading ? 'rgba(0,0,0,0.25)' : '#FFFFFF'}
-              />
-            </TouchableOpacity>
+      <View style={styles.inputArea}>
+        {(isListening || liveUserTranscript) && (
+          <View style={styles.transcriptBanner}>
+            <Text style={styles.transcriptText} numberOfLines={2}>
+              {liveUserTranscript || 'Listening...'}
+            </Text>
+          </View>
+        )}
 
-            {/* Spacer to balance the layout */}
-            <View style={styles.secondaryAction} />
+        <View style={styles.micDock}>
+          <View style={styles.secondaryAction} />
+
+          <View
+            style={[
+              styles.micButton,
+              isListening && styles.micButtonActive,
+              isConnecting && styles.micButtonDisabled,
+            ]}
+          >
+            <Ionicons
+              name={isListening ? 'radio-button-on' : 'mic'}
+              size={30}
+              color={isConnecting ? 'rgba(0,0,0,0.25)' : '#FFFFFF'}
+            />
           </View>
 
-          <Text style={styles.micHint}>
-            {isListening ? 'Tap to stop' : isLoading ? 'Thinking...' : showTextInput ? 'Tap mic to go back to speaking' : 'Tap to speak or type'}
-          </Text>
+          <View style={styles.secondaryAction} />
         </View>
-      </KeyboardAvoidingView>
+
+        <Text style={styles.micHint}>
+          {isConnecting
+            ? 'Starting speaking practice...'
+            : isListening
+              ? 'Speak naturally'
+              : isSpeaking
+                ? `${tutorName} is responding`
+                : 'Speak when you are ready'}
+        </Text>
+      </View>
     </SafeAreaView>
   );
 }
@@ -412,8 +385,6 @@ export default function DiscussScreen() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   container: { flex: 1, backgroundColor: '#F8F7F1' },
-
-  // Header
   header: {
     height: 60,
     backgroundColor: '#FFFFFF',
@@ -442,8 +413,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(161,76,76,0.07)',
   },
   liveText: { fontSize: 12, fontWeight: '500', color: '#A14C4C' },
-
-  // Article strip
   articleCard: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingHorizontal: 18, paddingVertical: 10,
@@ -456,8 +425,6 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     backgroundColor: '#F8F7F1',
   },
-
-  // Messages
   messagesList: { flex: 1 },
   messagesContent: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 12, gap: 12 },
   messageRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
@@ -477,21 +444,17 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
     minWidth: 48, minHeight: 38, alignItems: 'center', justifyContent: 'center',
   },
-  thinkingBubble: { paddingHorizontal: 16, paddingVertical: 10 },
+  liveBubble: { opacity: 0.78 },
   bubbleText: { fontSize: 15, lineHeight: 22 },
   userBubbleText: { color: '#FFFFFF' },
   aiBubbleText: { color: '#1A1A1A' },
   errorText: { fontSize: 13, color: Colors.error, textAlign: 'center', marginTop: 8 },
-
-  // Input area
   inputArea: {
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: 'rgba(0,0,0,0.07)',
     paddingBottom: 8,
   },
-
-  // Live transcript
   transcriptBanner: {
     marginHorizontal: 16,
     marginTop: 12,
@@ -503,35 +466,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   transcriptText: { fontSize: 14, color: '#3A3A3A', lineHeight: 20 },
-
-  // Text input row
-  textRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingTop: 10,
-  },
-  input: {
-    flex: 1,
-    minHeight: 42,
-    maxHeight: 110,
-    backgroundColor: '#F3F2EC',
-    borderRadius: 21,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: '#1A1A1A',
-    lineHeight: 21,
-  },
-  sendButton: {
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: '#66643B',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  sendButtonDisabled: { backgroundColor: 'rgba(0,0,0,0.08)' },
-
-  // Mic dock
   micDock: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -573,8 +507,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 4,
   },
-
-  // Empty state
   emptyState: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 32, gap: 10, backgroundColor: '#F8F7F1',

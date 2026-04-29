@@ -1,4 +1,5 @@
 import { NativeLanguage } from '@/types';
+import { buildBackendUrl, getBackendUrl } from '@/services/backend';
 
 export interface WordDefinition {
   word: string;
@@ -13,8 +14,6 @@ export interface TranslatedWordDefinition {
   translatedDefinition: string;
   nativeLanguage: NativeLanguage;
 }
-
-const TTS_PROXY_URL = process.env.EXPO_PUBLIC_TTS_PROXY_URL ?? '';
 
 export async function lookupWord(word: string): Promise<WordDefinition | null> {
   // Strip leading/trailing punctuation for the lookup
@@ -53,11 +52,10 @@ export async function translateWordDefinition(
   definition: string,
   nativeLanguage: NativeLanguage,
 ): Promise<TranslatedWordDefinition | null> {
-  if (!TTS_PROXY_URL) return null;
+  if (!getBackendUrl()) return null;
 
   try {
-    const translateUrl = new URL('/api/vocab/translate', TTS_PROXY_URL).toString();
-    const res = await fetch(translateUrl, {
+    const res = await fetch(buildBackendUrl('/api/vocab/translate'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

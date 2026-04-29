@@ -28,11 +28,8 @@ import {
   translateWordDefinition,
 } from '@/services/dictionaryService';
 import {
-  getTtsMode,
   requestArticleSpeechUrl,
   requestSpeechUrl,
-  speakArticleOnDevice,
-  speakTextOnDevice,
   stopDeviceSpeech,
 } from '@/services/ttsService';
 import { logArticleEvent } from '@/services/supabaseSyncService';
@@ -190,57 +187,41 @@ export default function ArticleReader() {
     const nextWordAudioKey = `${activeVoiceKey}:${wordToSpeak.toLowerCase()}`;
 
     try {
-      if (getTtsMode() === 'elevenlabs-proxy') {
-        if (wordPlayerStatus.playing || isPreparingWordAudio) {
-          try {
-            wordPlayer.pause();
-          } catch {}
-          try {
-            await wordPlayer.seekTo(0);
-          } catch {}
-          setIsPronouncingWord(false);
-          setIsPreparingWordAudio(false);
-          return;
-        }
-
-        setIsPronouncingWord(true);
-
-        if (wordAudioSource && wordAudioKey === nextWordAudioKey) {
-          try {
-            await wordPlayer.seekTo(0);
-            wordPlayer.play();
-            return;
-          } catch {
-            // If replay fails, fetch a fresh URL below.
-          }
-        }
-
-        setIsPreparingWordAudio(true);
-        const nextWordAudioUrl = await requestSpeechUrl(wordToSpeak, selectedVoiceId);
-        setWordAudioSource(nextWordAudioUrl);
-        setWordAudioKey(nextWordAudioKey);
-        wordPlayer.replace(nextWordAudioUrl);
-        return;
-      }
-
-      if (isPronouncingWord) {
-        await stopDeviceSpeech();
+      if (wordPlayerStatus.playing || isPreparingWordAudio) {
+        try {
+          wordPlayer.pause();
+        } catch {}
+        try {
+          await wordPlayer.seekTo(0);
+        } catch {}
         setIsPronouncingWord(false);
+        setIsPreparingWordAudio(false);
         return;
       }
 
-      await speakTextOnDevice(wordToSpeak, {
-        onStart: () => setIsPronouncingWord(true),
-        onDone: () => setIsPronouncingWord(false),
-        onError: () => setIsPronouncingWord(false),
-      });
+      setIsPronouncingWord(true);
+
+      if (wordAudioSource && wordAudioKey === nextWordAudioKey) {
+        try {
+          await wordPlayer.seekTo(0);
+          wordPlayer.play();
+          return;
+        } catch {
+          // If replay fails, fetch a fresh URL below.
+        }
+      }
+
+      setIsPreparingWordAudio(true);
+      const nextWordAudioUrl = await requestSpeechUrl(wordToSpeak, selectedVoiceId);
+      setWordAudioSource(nextWordAudioUrl);
+      setWordAudioKey(nextWordAudioKey);
+      wordPlayer.replace(nextWordAudioUrl);
     } catch {
       setIsPreparingWordAudio(false);
       setIsPronouncingWord(false);
     }
   }, [
     isPreparingWordAudio,
-    isPronouncingWord,
     selectedVoiceId,
     selectedWord,
     wordAudioKey,
@@ -269,69 +250,44 @@ export default function ArticleReader() {
 
     setListenError(null);
 
-    if (getTtsMode() === 'elevenlabs-proxy') {
-      if (playerStatus.playing || isPreparingAudio) {
-        await resetProxyPlayback();
-        setIsPreparingAudio(false);
-        setIsListening(false);
-        return;
-      }
-
-      try {
-        setIsListening(true);
-        void logArticleEvent('listen_start', article);
-
-        if (audioSource) {
-          try {
-            await player.seekTo(0);
-            player.play();
-          } catch (error) {
-            throw error instanceof Error
-              ? error
-              : new Error('Unable to resume ElevenLabs playback.');
-          }
-          return;
-        }
-
-        setIsPreparingAudio(true);
-        const nextAudioUrl = await requestArticleSpeechUrl(
-          article.title,
-          article.source,
-          article.content,
-          selectedVoiceId,
-        );
-        setAudioSource(nextAudioUrl);
-        player.replace(nextAudioUrl);
-      } catch (error) {
-        setListenError(
-          error instanceof Error ? error.message : 'Unable to start ElevenLabs playback.',
-        );
-        setIsPreparingAudio(false);
-        setIsListening(false);
-      }
-      return;
-    }
-
-    if (isListening) {
-      await stopDeviceSpeech();
+    if (playerStatus.playing || isPreparingAudio) {
+      await resetProxyPlayback();
+      setIsPreparingAudio(false);
       setIsListening(false);
       return;
     }
 
     try {
+      setIsListening(true);
       void logArticleEvent('listen_start', article);
-      await speakArticleOnDevice(article.title, article.source, article.content, {
-        onStart: () => setIsListening(true),
-        onDone: () => setIsListening(false),
-        onError: () => setIsListening(false),
-      });
+
+      if (audioSource) {
+        try {
+          await player.seekTo(0);
+          player.play();
+        } catch (error) {
+          throw error instanceof Error ? error : new Error('Unable to resume audio playback.');
+        }
+        return;
+      }
+
+      setIsPreparingAudio(true);
+      const nextAudioUrl = await requestArticleSpeechUrl(
+        article.title,
+        article.source,
+        article.content,
+        selectedVoiceId,
+      );
+      setAudioSource(nextAudioUrl);
+      player.replace(nextAudioUrl);
     } catch (error) {
       setListenError(error instanceof Error ? error.message : 'Unable to start audio playback.');
+      setIsPreparingAudio(false);
+      setIsListening(false);
     }
   }, [
     article,
     audioSource,
-    isListening,
     isPreparingAudio,
     player,
     playerStatus.playing,
@@ -355,8 +311,6 @@ export default function ArticleReader() {
   }, [article, recordArticleOpen]);
 
   useEffect(() => {
-    if (getTtsMode() !== 'elevenlabs-proxy') return;
-
     if (isPreparingAudio && playerStatus.isLoaded && !playerStatus.isBuffering) {
       player.volume = 1.0;
       player.play();
@@ -365,8 +319,6 @@ export default function ArticleReader() {
   }, [isPreparingAudio, player, playerStatus.isBuffering, playerStatus.isLoaded]);
 
   useEffect(() => {
-    if (getTtsMode() !== 'elevenlabs-proxy') return;
-
     if (isPreparingWordAudio && wordPlayerStatus.isLoaded && !wordPlayerStatus.isBuffering) {
       wordPlayer.volume = 1.0;
       wordPlayer.play();
@@ -375,8 +327,6 @@ export default function ArticleReader() {
   }, [isPreparingWordAudio, wordPlayer, wordPlayerStatus.isBuffering, wordPlayerStatus.isLoaded]);
 
   useEffect(() => {
-    if (getTtsMode() !== 'elevenlabs-proxy') return;
-
     if (playerStatus.playing) {
       setIsListening(true);
       return;
@@ -399,8 +349,6 @@ export default function ArticleReader() {
   }, [selectedVoiceId]);
 
   useEffect(() => {
-    if (getTtsMode() !== 'elevenlabs-proxy') return;
-
     if (wordPlayerStatus.playing) {
       setIsPronouncingWord(true);
       return;

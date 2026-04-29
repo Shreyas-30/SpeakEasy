@@ -1,4 +1,4 @@
-const BACKEND_URL = process.env.EXPO_PUBLIC_TTS_PROXY_URL ?? '';
+import { buildBackendUrl, getBackendUrl } from '@/services/backend';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -12,12 +12,12 @@ export async function getAIResponse(
   articleContent: string,
   tutorName: string,
 ): Promise<string> {
-  if (!BACKEND_URL) {
-    throw new Error('Missing EXPO_PUBLIC_TTS_PROXY_URL');
+  if (!getBackendUrl()) {
+    throw new Error('Missing EXPO_PUBLIC_BACKEND_URL');
   }
 
   try {
-    const response = await fetch(new URL('/api/chat', BACKEND_URL).toString(), {
+    const response = await fetch(buildBackendUrl('/api/chat'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages, articleTitle, articleSource, articleContent, tutorName }),

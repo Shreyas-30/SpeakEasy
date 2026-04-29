@@ -7,8 +7,8 @@ import {
   SubscriptionStatus,
 } from '@/constants/subscription';
 import { supabase } from './supabaseClient';
+import { buildBackendUrl } from '@/services/backend';
 
-const TTS_PROXY_URL = process.env.EXPO_PUBLIC_TTS_PROXY_URL ?? '';
 const ANONYMOUS_ID_KEY = 'speakeasy-subscription-anonymous-id';
 const PENDING_SUBSCRIPTION_INTENT_KEY = 'speakeasy-pending-subscription-intent';
 
@@ -17,14 +17,6 @@ export type PendingSubscriptionIntent = {
   intent: 'upgrade' | 'restore';
   planId?: SubscriptionPlanId;
 };
-
-function getBackendUrl(pathname: string) {
-  if (!TTS_PROXY_URL) {
-    throw new Error('Missing EXPO_PUBLIC_TTS_PROXY_URL for backend subscription requests');
-  }
-
-  return new URL(pathname, TTS_PROXY_URL).toString();
-}
 
 function fromSubscriptionRow(row: any): SubscriptionEntitlement {
   return {
@@ -145,7 +137,7 @@ export async function requestMockSubscriptionUpgrade(
   const token = await getSessionAccessToken();
   if (!token) return null;
 
-  const response = await fetch(getBackendUrl('/api/subscription/mock-upgrade'), {
+  const response = await fetch(buildBackendUrl('/api/subscription/mock-upgrade'), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,

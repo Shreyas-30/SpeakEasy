@@ -11,20 +11,34 @@ const cacheDir = resolve(__dirname, '.cache', 'tts');
 const PORT = Number.parseInt(process.env.PORT ?? '8787', 10);
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ?? process.env.RENDER_EXTERNAL_URL ?? '';
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN ?? '*';
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY ?? '';
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb';
-const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID ?? 'eleven_multilingual_v2';
 const GUARDIAN_KEY = process.env.GUARDIAN_KEY ?? process.env.EXPO_PUBLIC_GUARDIAN_KEY ?? '';
 const GNEWS_KEY = process.env.GNEWS_KEY ?? process.env.EXPO_PUBLIC_GNEWS_KEY ?? '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 const OPENAI_TRANSLATION_MODEL = process.env.OPENAI_TRANSLATION_MODEL ?? 'gpt-4.1-mini';
 const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL ?? 'gpt-4o-mini';
+const OPENAI_TTS_MODEL = process.env.OPENAI_TTS_MODEL ?? 'gpt-4o-mini-tts';
+const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL ?? 'gpt-realtime-1.5';
+const OPENAI_REALTIME_SESSION_TARGET_SECONDS = Number.parseInt(
+  process.env.OPENAI_REALTIME_SESSION_TARGET_SECONDS ?? '150',
+  10,
+);
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').replace(/\/$/, '');
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const translationCacheDir = resolve(__dirname, '.cache', 'translate');
 const GUARDIAN_BASE = 'https://content.guardianapis.com';
 const GNEWS_BASE = 'https://gnews.io/api/v4';
+
+const OPENAI_VOICES = {
+  sophia: { name: 'Sophia', openaiVoice: 'marin' },
+  maya: { name: 'Maya', openaiVoice: 'coral' },
+  leo: { name: 'Leo', openaiVoice: 'cedar' },
+  noah: { name: 'Noah', openaiVoice: 'echo' },
+};
+
+function getTutorVoice(voiceId) {
+  return OPENAI_VOICES[String(voiceId ?? '').trim()] ?? OPENAI_VOICES.sophia;
+}
 
 const TOPIC_MAP = {
   technology: { api: 'guardian', section: 'technology' },
@@ -482,59 +496,111 @@ async function ensureTranslationCacheDir() {
   await mkdir(translationCacheDir, { recursive: true });
 }
 
-async function createElevenLabsSpeech(text, voiceId) {
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'audio/mpeg',
-        'xi-api-key': ELEVENLABS_API_KEY,
-      },
-      body: JSON.stringify({
-        text,
-        model_id: ELEVENLABS_MODEL_ID,
-        output_format: 'mp3_44100_128',
-        voice_settings: {
-          stability: 0.45,
-          similarity_boost: 0.75,
-          style: 0.2,
-          use_speaker_boost: true,
-        },
-      }),
+async function createOpenAISpeech(text, voiceId) {
+  const tutorVoice = getTutorVoice(voiceId);
+  const response = await fetch('https://api.openai.com/v1/audio/speech', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
     },
-  );
+    body: JSON.stringify({
+      model: OPENAI_TTS_MODEL,
+      voice: tutorVoice.openaiVoice,
+      input: text,
+      response_format: 'mp3',
+      instructions:
+        'Speak clearly and naturally for an intermediate English learner. Use steady pacing and careful pronunciation.',
+    }),
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`ElevenLabs ${response.status}: ${errorText.slice(0, 300)}`);
+    throw new Error(`OpenAI speech ${response.status}: ${errorText.slice(0, 300)}`);
   }
 
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function fetchElevenLabsVoices() {
-  const response = await fetch('https://api.elevenlabs.io/v1/voices', {
+function buildRealtimeInstructions({ articleTitle, articleSource, articleContent, difficulty, tutorName }) {
+  const compactContent = buildSpeechText(articleContent).slice(0, 2200);
+  const targetSeconds = Number.isFinite(OPENAI_REALTIME_SESSION_TARGET_SECONDS)
+    ? OPENAI_REALTIME_SESSION_TARGET_SECONDS
+    : 150;
+
+  return `You are ${tutorName || 'Sophia'}, a friendly English-speaking coach in SpeakEasy.
+
+The learner is intermediate at English and wants confidence for daily life, not textbook English.
+Discuss the article they just read. Ask one question at a time. Keep voice responses short, warm, and natural.
+Gently correct grammar after the user finishes speaking by briefly restating the correct phrase.
+Teach useful article words or phrases when it fits naturally. Avoid sounding like a quiz.
+
+Graceful timing:
+- The conversation should feel complete in about ${targetSeconds} seconds.
+- Near the last 30 seconds, summarize their practice or ask one final reflection question.
+- End with one short encouragement and a clear warm closing.
+- If the user keeps talking after the wrap-up, answer briefly and close again without abruptly cutting them off.
+
+Article context:
+Title: ${articleTitle}
+Source: ${articleSource || 'Unknown source'}
+Difficulty: ${difficulty || 'Intermediate'}
+Excerpt: ${compactContent}`;
+}
+
+async function createRealtimeClientSecret(body) {
+  const voice = getTutorVoice(body.voiceId);
+  const instructions = buildRealtimeInstructions({
+    articleTitle: buildSpeechText(body.articleTitle),
+    articleSource: buildSpeechText(body.articleSource),
+    articleContent: buildSpeechText(body.articleContent),
+    difficulty: buildSpeechText(body.difficulty),
+    tutorName: voice.name,
+  });
+
+  const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+    method: 'POST',
     headers: {
-      'xi-api-key': ELEVENLABS_API_KEY,
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
     },
+    body: JSON.stringify({
+      session: {
+        type: 'realtime',
+        model: OPENAI_REALTIME_MODEL,
+        instructions,
+        audio: {
+          input: {
+            transcription: {
+              model: 'gpt-4o-transcribe',
+            },
+          },
+          output: {
+            voice: voice.openaiVoice,
+          },
+        },
+      },
+    }),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`ElevenLabs ${response.status}: ${errorText.slice(0, 300)}`);
+    throw new Error(`OpenAI Realtime ${response.status}: ${errorText.slice(0, 300)}`);
   }
 
   const payload = await response.json();
-  return (payload.voices ?? []).map((voice) => ({
-    id: voice.voice_id,
-    name: voice.name,
-    category: voice.category,
-    description: voice.description,
-    previewUrl: voice.preview_url,
-    labels: voice.labels ?? {},
-  }));
+  const clientSecret = payload.client_secret?.value ?? payload.value ?? payload.secret;
+  if (!clientSecret) {
+    throw new Error('OpenAI Realtime response did not include a client secret');
+  }
+
+  return {
+    clientSecret,
+    model: OPENAI_REALTIME_MODEL,
+    voiceId: String(body.voiceId || 'sophia'),
+    voiceName: voice.name,
+    sessionTargetSeconds: OPENAI_REALTIME_SESSION_TARGET_SECONDS,
+  };
 }
 
 function getNativeLanguageLabel(nativeLanguage) {
@@ -614,24 +680,34 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, publicBaseUrl);
 
   if (req.method === 'GET' && url.pathname === '/health') {
-    sendJson(res, 200, { ok: true, service: 'tts-proxy' });
+    sendJson(res, 200, { ok: true, service: 'speakeasy-backend' });
     return;
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/tts/voices') {
-    if (!ELEVENLABS_API_KEY) {
+  if (req.method === 'POST' && url.pathname === '/api/realtime/session') {
+    if (!OPENAI_API_KEY) {
       sendJson(res, 500, {
-        error: 'Missing ELEVENLABS_API_KEY. Add it to .env.server before starting the proxy.',
+        error: 'Missing OPENAI_API_KEY. Add it to Render or .env.server before starting the backend.',
       });
       return;
     }
 
     try {
-      const voices = await fetchElevenLabsVoices();
-      sendJson(res, 200, { voices });
+      const body = await readJsonBody(req);
+      const articleTitle = buildSpeechText(body.articleTitle);
+      const articleContent = buildSpeechText(body.articleContent);
+
+      if (!articleTitle || !articleContent) {
+        sendJson(res, 400, { error: 'articleTitle and articleContent are required' });
+        return;
+      }
+
+      const session = await createRealtimeClientSecret(body);
+      sendJson(res, 200, session);
     } catch (error) {
+      console.error('Realtime session creation failed:', error);
       sendJson(res, 500, {
-        error: error instanceof Error ? error.message : 'Unable to load ElevenLabs voices',
+        error: error instanceof Error ? error.message : 'Unable to create realtime session',
       });
     }
     return;
@@ -770,9 +846,9 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/tts') {
-    if (!ELEVENLABS_API_KEY) {
+    if (!OPENAI_API_KEY) {
       sendJson(res, 500, {
-        error: 'Missing ELEVENLABS_API_KEY. Add it to .env.server before starting the proxy.',
+        error: 'Missing OPENAI_API_KEY. Add it to Render or .env.server before starting the backend.',
       });
       return;
     }
@@ -780,14 +856,15 @@ const server = createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       const text = buildSpeechText(body.text);
-      const voiceId = String(body.voiceId || ELEVENLABS_VOICE_ID).trim();
+      const voiceId = String(body.voiceId || 'sophia').trim();
+      const tutorVoice = getTutorVoice(voiceId);
 
       if (!text) {
         sendJson(res, 400, { error: 'Missing text for speech generation' });
         return;
       }
 
-      if (text.length > 5000) {
+      if (text.length > 7500) {
         sendJson(res, 400, { error: 'Text too long for a single speech request' });
         return;
       }
@@ -796,25 +873,27 @@ const server = createServer(async (req, res) => {
 
       const cacheId = buildCacheId({
         text,
-        voiceId,
-        modelId: ELEVENLABS_MODEL_ID,
+        voiceId: tutorVoice.openaiVoice,
+        modelId: OPENAI_TTS_MODEL,
       });
       const fileName = `${cacheId}.mp3`;
       const filePath = join(cacheDir, fileName);
 
       if (!existsSync(filePath)) {
-        const audio = await createElevenLabsSpeech(text, voiceId);
+        const audio = await createOpenAISpeech(text, voiceId);
         await writeFile(filePath, audio);
       }
 
       sendJson(res, 200, {
         audioUrl: `${publicBaseUrl}/api/tts/cache/${fileName}`,
         voiceId,
-        modelId: ELEVENLABS_MODEL_ID,
+        voiceName: tutorVoice.name,
+        modelId: OPENAI_TTS_MODEL,
       });
     } catch (error) {
+      console.error('OpenAI TTS failed:', error);
       sendJson(res, 500, {
-        error: error instanceof Error ? error.message : 'Unknown TTS proxy error',
+        error: error instanceof Error ? error.message : 'Unknown TTS error',
       });
     }
     return;

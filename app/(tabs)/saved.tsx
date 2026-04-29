@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { Colors } from '@/constants/colors';
 import { useAppStore } from '@/store/useAppStore';
-import { getTtsMode, requestSpeechUrl, speakTextOnDevice, stopDeviceSpeech } from '@/services/ttsService';
+import { requestSpeechUrl, stopDeviceSpeech } from '@/services/ttsService';
 import { HardPaywall } from '@/components/HardPaywall';
 
 export default function SavedScreen() {
@@ -42,46 +42,31 @@ export default function SavedScreen() {
       const cacheKey = `${activeVoiceKey}:${wordId}`;
 
       try {
-        if (getTtsMode() === 'elevenlabs-proxy') {
-          if (speakingWordId === wordId && (playerStatus.playing || isPreparingWordAudio)) {
-            try {
-              player.pause();
-            } catch {}
-            try {
-              await player.seekTo(0);
-            } catch {}
-            setSpeakingWordId(null);
-            setIsPreparingWordAudio(false);
-            return;
-          }
-
-          setSpeakingWordId(wordId);
-
-          const cachedUrl = audioCache[cacheKey];
-          if (cachedUrl) {
-            setIsPreparingWordAudio(true);
-            player.replace(cachedUrl);
-            return;
-          }
-
-          setIsPreparingWordAudio(true);
-          const nextAudioUrl = await requestSpeechUrl(word, selectedVoiceId);
-          setAudioCache((current) => ({ ...current, [cacheKey]: nextAudioUrl }));
-          player.replace(nextAudioUrl);
-          return;
-        }
-
-        if (speakingWordId === wordId) {
-          await stopDeviceSpeech();
+        if (speakingWordId === wordId && (playerStatus.playing || isPreparingWordAudio)) {
+          try {
+            player.pause();
+          } catch {}
+          try {
+            await player.seekTo(0);
+          } catch {}
           setSpeakingWordId(null);
+          setIsPreparingWordAudio(false);
           return;
         }
 
-        await speakTextOnDevice(word, {
-          onStart: () => setSpeakingWordId(wordId),
-          onDone: () => setSpeakingWordId((current) => (current === wordId ? null : current)),
-          onError: () => setSpeakingWordId((current) => (current === wordId ? null : current)),
-        });
+        setSpeakingWordId(wordId);
+
+        const cachedUrl = audioCache[cacheKey];
+        if (cachedUrl) {
+          setIsPreparingWordAudio(true);
+          player.replace(cachedUrl);
+          return;
+        }
+
+        setIsPreparingWordAudio(true);
+        const nextAudioUrl = await requestSpeechUrl(word, selectedVoiceId);
+        setAudioCache((current) => ({ ...current, [cacheKey]: nextAudioUrl }));
+        player.replace(nextAudioUrl);
       } catch {
         setSpeakingWordId((current) => (current === wordId ? null : current));
         setIsPreparingWordAudio(false);
@@ -99,8 +84,6 @@ export default function SavedScreen() {
   }, []);
 
   React.useEffect(() => {
-    if (getTtsMode() !== 'elevenlabs-proxy') return;
-
     if (isPreparingWordAudio && playerStatus.isLoaded && !playerStatus.isBuffering) {
       player.volume = 1.0;
       player.play();
@@ -109,8 +92,6 @@ export default function SavedScreen() {
   }, [isPreparingWordAudio, player, playerStatus.isBuffering, playerStatus.isLoaded]);
 
   React.useEffect(() => {
-    if (getTtsMode() !== 'elevenlabs-proxy') return;
-
     if (!playerStatus.playing && playerStatus.didJustFinish) {
       setSpeakingWordId(null);
       try {

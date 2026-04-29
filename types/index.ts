@@ -23,6 +23,14 @@ export type ArticleEventType =
   | 'vocab_lookup'
   | 'vocab_save';
 
+export type DiscussionMessageRole = 'user' | 'assistant';
+
+export interface DiscussionMessage {
+  id: string;
+  role: DiscussionMessageRole;
+  content: string;
+}
+
 export interface Article {
   id: string;
   title: string;

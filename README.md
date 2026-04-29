@@ -18,7 +18,7 @@ The app helps learners practice English through:
 - TypeScript
 - Zustand
 - OpenAI API
-- ElevenLabs API
+- Supabase
 
 ## Run locally
 
@@ -27,7 +27,7 @@ npm install
 npx expo start
 ```
 
-To use the backend proxy for text-to-speech and translation, create local env files from:
+To use the backend for feed, text-to-speech, Realtime speaking practice, and translation, create local env files from:
 - `.env.example`
 - `.env.server.example`
 
@@ -40,4 +40,4 @@ npm run tts:server
 ## Notes
 
 - Real API keys should stay only in local env files and must not be committed.
-- The app currently supports Expo Go for rapid testing and can later be built with EAS for iOS distribution.
+- Realtime speaking practice requires a development or EAS build because it uses native WebRTC.

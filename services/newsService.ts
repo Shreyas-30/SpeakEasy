@@ -1,9 +1,9 @@
 import { Article, DifficultyLevel } from '@/types';
 import { MOCK_ARTICLES } from '@/constants/mockData';
+import { buildBackendUrl, getBackendUrl } from '@/services/backend';
 
 const GUARDIAN_KEY = process.env.EXPO_PUBLIC_GUARDIAN_KEY ?? '';
 const GNEWS_KEY = process.env.EXPO_PUBLIC_GNEWS_KEY ?? '';
-const TTS_PROXY_URL = process.env.EXPO_PUBLIC_TTS_PROXY_URL ?? '';
 
 const GUARDIAN_BASE = 'https://content.guardianapis.com';
 const GNEWS_BASE = 'https://gnews.io/api/v4';
@@ -253,10 +253,10 @@ function dedupeArticles(articles: Article[]): Article[] {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 async function fetchFromBackend(topicIds: string[]): Promise<Article[] | null> {
-  if (!TTS_PROXY_URL) return null;
+  if (!getBackendUrl()) return null;
 
   try {
-    const feedUrl = new URL('/api/feed', TTS_PROXY_URL);
+    const feedUrl = new URL(buildBackendUrl('/api/feed'));
     feedUrl.searchParams.set('topics', topicIds.join(','));
 
     const res = await fetch(feedUrl.toString());

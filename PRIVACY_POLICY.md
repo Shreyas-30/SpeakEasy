@@ -29,8 +29,7 @@ SpeakEasy uses information to:
 
 SpeakEasy relies on third-party services to power parts of the product. Depending on the feature being used, limited information may be sent to these services for processing:
 
-- OpenAI, for language-processing features such as translated vocabulary explanations
-- ElevenLabs, for cloud text-to-speech features when enabled
+- OpenAI, for language-processing, text-to-speech, and speaking-practice features
 - dictionaryapi.dev, for English word definitions
 - News content providers such as The Guardian and GNews, for article retrieval
 - Expo and Apple infrastructure, as needed to deliver and run the app

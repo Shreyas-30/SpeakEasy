@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   StatusBar,
   Switch,
-  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,9 +15,12 @@ import { Colors } from '@/constants/colors';
 import { useAppStore } from '@/store/useAppStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { TOPICS } from '@/constants/topics';
-import { fetchTtsVoices, getConfiguredDefaultVoiceId, getTtsMode } from '@/services/ttsService';
 import { NativeLanguage, TtsVoiceOption } from '@/types';
 import { getPlanById } from '@/constants/subscription';
+import {
+  SPEAKING_TUTOR_VOICES,
+  getSpeakingTutorVoice,
+} from '@/constants/voice';
 
 const NATIVE_LANGUAGE_LABELS: Record<NativeLanguage, string> = {
   ar: 'Arabic',
@@ -41,85 +43,8 @@ interface SettingRowProps {
   rightComponent?: React.ReactNode;
 }
 
-type CuratedVoiceTarget = {
-  accent: 'american' | 'british';
-  gender: 'female' | 'male';
-  displayName: string;
-};
-
-const CURATED_VOICE_TARGETS: CuratedVoiceTarget[] = [
-  { accent: 'american', gender: 'female', displayName: 'Maya' },
-  { accent: 'american', gender: 'male', displayName: 'Ethan' },
-  { accent: 'british', gender: 'female', displayName: 'Sophie' },
-  { accent: 'british', gender: 'male', displayName: 'Oliver' },
-];
-
-function normalizeLabel(value?: string): string {
-  return (value ?? '').trim().toLowerCase();
-}
-
-function getVoiceAccent(voice: TtsVoiceOption): string {
-  return normalizeLabel(
-    voice.labels?.accent ||
-      voice.labels?.language ||
-      voice.labels?.dialect ||
-      voice.description,
-  );
-}
-
-function getVoiceGender(voice: TtsVoiceOption): string {
-  return normalizeLabel(voice.labels?.gender || voice.labels?.sex || voice.description);
-}
-
 function getVoiceMeta(voice: TtsVoiceOption): string {
-  const accent = voice.labels?.accent;
-  const gender = voice.labels?.gender;
-
-  if (accent && gender) {
-    return `${accent} · ${gender}`;
-  }
-
-  return accent || gender || voice.labels?.age || voice.category || 'Voice';
-}
-
-function curateVoiceOptions(voices: TtsVoiceOption[]): TtsVoiceOption[] {
-  const curated: TtsVoiceOption[] = [];
-  const usedIds = new Set<string>();
-
-  for (const target of CURATED_VOICE_TARGETS) {
-    const match = voices.find((voice) => {
-      if (usedIds.has(voice.id)) return false;
-
-      const accent = getVoiceAccent(voice);
-      const gender = getVoiceGender(voice);
-
-      return accent.includes(target.accent) && gender.includes(target.gender);
-    });
-
-    if (match) {
-      curated.push({
-        ...match,
-        originalName: match.originalName || match.name,
-        name: target.displayName,
-      });
-      usedIds.add(match.id);
-    }
-  }
-
-  if (curated.length < 4) {
-    for (const voice of voices) {
-      if (usedIds.has(voice.id)) continue;
-      curated.push({
-        ...voice,
-        originalName: voice.originalName || voice.name,
-      });
-      usedIds.add(voice.id);
-
-      if (curated.length === 4) break;
-    }
-  }
-
-  return curated;
+  return 'meta' in voice && typeof voice.meta === 'string' ? voice.meta : voice.category || 'Voice';
 }
 
 function SettingRow({ icon, label, value, onPress, showChevron = true, rightComponent }: SettingRowProps) {
@@ -153,68 +78,19 @@ export default function SettingsScreen() {
   } = useAppStore();
   const [notificationsEnabled, setNotificationsEnabled] = React.useState(true);
   const [dailyReminder, setDailyReminder] = React.useState(false);
-  const [voices, setVoices] = React.useState<TtsVoiceOption[]>([]);
-  const [voicesLoading, setVoicesLoading] = React.useState(false);
-  const [voicesError, setVoicesError] = React.useState<string | null>(null);
-  const hasLoadedVoices = React.useRef(false);
   const { user, isLoading: authLoading, error: authError, signOut, syncCurrentUserData } = useAuthStore();
 
   const myPredefinedTopics = TOPICS.filter((t) => selectedTopics.includes(t.id));
   const myCustomTopics = customTopics.filter((t) => selectedTopics.includes(t.id));
   const myTopics = [...myPredefinedTopics, ...myCustomTopics];
-  const isVoicePickerEnabled = getTtsMode() === 'elevenlabs-proxy';
   const currentPlan = getPlanById(subscriptionEntitlement.planId);
 
   React.useEffect(() => {
-    if (!isVoicePickerEnabled || hasLoadedVoices.current) return;
-
-    hasLoadedVoices.current = true;
-
-    let isMounted = true;
-
-    const loadVoices = async () => {
-      setVoicesLoading(true);
-      setVoicesError(null);
-
-      try {
-        const nextVoices = curateVoiceOptions(await fetchTtsVoices());
-        if (!isMounted) return;
-
-        setVoices(nextVoices);
-
-        if (nextVoices.length > 0) {
-          const configuredDefaultVoiceId = getConfiguredDefaultVoiceId();
-          const matchedConfiguredVoice = configuredDefaultVoiceId
-            ? nextVoices.find((voice) => voice.id === configuredDefaultVoiceId)
-            : null;
-          const matchedSelectedVoice = selectedVoiceId
-            ? nextVoices.find((voice) => voice.id === selectedVoiceId)
-            : null;
-
-          if (!selectedVoiceId) {
-            setSelectedVoice(matchedConfiguredVoice ?? nextVoices[0]);
-          } else if (matchedSelectedVoice && matchedSelectedVoice.name !== selectedVoiceName) {
-            setSelectedVoice(matchedSelectedVoice);
-          }
-        }
-      } catch (error) {
-        if (!isMounted) return;
-        setVoicesError(
-          error instanceof Error ? error.message : 'Unable to load voice options right now.',
-        );
-      } finally {
-        if (isMounted) {
-          setVoicesLoading(false);
-        }
-      }
-    };
-
-    void loadVoices();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [isVoicePickerEnabled, selectedVoiceId, selectedVoiceName, setSelectedVoice]);
+    const normalizedVoice = getSpeakingTutorVoice(selectedVoiceId);
+    if (selectedVoiceId !== normalizedVoice.id || selectedVoiceName !== normalizedVoice.name) {
+      setSelectedVoice(normalizedVoice);
+    }
+  }, [selectedVoiceId, selectedVoiceName, setSelectedVoice]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -306,9 +182,10 @@ export default function SettingsScreen() {
                 <Text style={styles.voiceHeaderSubtitle}>
                   {selectedVoiceName
                     ? `Current voice: ${selectedVoiceName}`
-                    : isVoicePickerEnabled
-                      ? 'Choose the tutor voice for article playback'
-                      : 'Enable ElevenLabs proxy mode to unlock voice selection'}
+                    : 'Choose the voice used for conversations and pronunciation'}
+                </Text>
+                <Text style={styles.voiceHelperText}>
+                  This voice is used for article discussions, article playback, and vocabulary pronunciation.
                 </Text>
               </View>
               <View style={styles.voiceBadge}>
@@ -316,71 +193,52 @@ export default function SettingsScreen() {
               </View>
             </View>
 
-            {isVoicePickerEnabled ? (
-              voicesLoading ? (
-                <View style={styles.voiceLoading}>
-                  <ActivityIndicator color={Colors.accent} />
-                  <Text style={styles.voiceLoadingText}>Loading available voices...</Text>
-                </View>
-              ) : voicesError ? (
-                <View style={styles.voiceLoading}>
-                  <Text style={styles.voiceErrorText}>{voicesError}</Text>
-                </View>
-              ) : (
-                <View style={styles.voiceList}>
-                  {voices.map((voice) => {
-                    const isSelected = voice.id === selectedVoiceId;
-                    const accentRole = getVoiceMeta(voice);
+            <View style={styles.voiceList}>
+              {SPEAKING_TUTOR_VOICES.map((voice) => {
+                const isSelected = voice.id === getSpeakingTutorVoice(selectedVoiceId).id;
+                const accentRole = getVoiceMeta(voice);
 
-                    return (
-                      <TouchableOpacity
-                        key={voice.id}
-                        style={[
-                          styles.voiceOption,
-                          isSelected && styles.voiceOptionSelected,
-                        ]}
-                        onPress={() => setSelectedVoice(voice)}
-                        activeOpacity={0.8}
-                      >
-                        <View style={styles.voiceOptionTop}>
-                          <View>
-                            <Text
-                              style={[
-                                styles.voiceOptionName,
-                                isSelected && styles.voiceOptionNameSelected,
-                              ]}
-                            >
-                              {voice.name}
-                            </Text>
-                            <Text style={styles.voiceOptionMeta}>{accentRole}</Text>
-                          </View>
-                          {isSelected ? (
-                            <Ionicons name="checkmark-circle" size={20} color={Colors.accent} />
-                          ) : (
-                            <Ionicons
-                              name="ellipse-outline"
-                              size={18}
-                              color={Colors.textMuted}
-                            />
-                          )}
-                        </View>
-                        {voice.description ? (
-                          <Text style={styles.voiceOptionDescription} numberOfLines={2}>
-                            {voice.description}
-                          </Text>
-                        ) : null}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              )
-            ) : (
-              <View style={styles.voiceLoading}>
-                <Text style={styles.voiceLoadingText}>
-                  Voice picker appears automatically when the app is using the ElevenLabs proxy.
-                </Text>
-              </View>
-            )}
+                return (
+                  <TouchableOpacity
+                    key={voice.id}
+                    style={[
+                      styles.voiceOption,
+                      isSelected && styles.voiceOptionSelected,
+                    ]}
+                    onPress={() => setSelectedVoice(voice)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.voiceOptionTop}>
+                      <View>
+                        <Text
+                          style={[
+                            styles.voiceOptionName,
+                            isSelected && styles.voiceOptionNameSelected,
+                          ]}
+                        >
+                          {voice.name}
+                        </Text>
+                        <Text style={styles.voiceOptionMeta}>{accentRole}</Text>
+                      </View>
+                      {isSelected ? (
+                        <Ionicons name="checkmark-circle" size={20} color={Colors.accent} />
+                      ) : (
+                        <Ionicons
+                          name="ellipse-outline"
+                          size={18}
+                          color={Colors.textMuted}
+                        />
+                      )}
+                    </View>
+                    {voice.description ? (
+                      <Text style={styles.voiceOptionDescription} numberOfLines={2}>
+                        {voice.description}
+                      </Text>
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
         </View>
 
@@ -630,6 +488,11 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: Colors.textSecondary,
   },
+  voiceHelperText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: Colors.textMuted,
+  },
   voiceBadge: {
     width: 32,
     height: 32,
@@ -637,21 +500,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#EEF4FF',
-  },
-  voiceLoading: {
-    paddingHorizontal: 14,
-    paddingVertical: 16,
-    gap: 10,
-  },
-  voiceLoadingText: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: Colors.textSecondary,
-  },
-  voiceErrorText: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: Colors.error,
   },
   voiceList: {
     padding: 12,
