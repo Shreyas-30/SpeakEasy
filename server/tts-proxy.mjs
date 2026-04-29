@@ -575,9 +575,16 @@ async function createRealtimeClientSecret(body) {
         instructions,
         audio: {
           input: {
+            noise_reduction: {
+              type: 'near_field',
+            },
             transcription: {
               model: 'gpt-4o-transcribe',
+              language: 'en',
+              prompt:
+                'The learner is practicing spoken English. Transcribe only English words. If the audio is unclear or silent, leave the transcript empty instead of guessing another language.',
             },
+            turn_detection: null,
           },
           output: {
             voice: voice.openaiVoice,

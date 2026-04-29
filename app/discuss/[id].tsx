@@ -101,6 +101,7 @@ export default function DiscussScreen() {
   const [messages, setMessages] = useState<DiscussionMessage[]>([]);
   const [isConnecting, setIsConnecting] = useState(true);
   const [isListening, setIsListening] = useState(false);
+  const [isRecordingTurn, setIsRecordingTurn] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [liveUserTranscript, setLiveUserTranscript] = useState('');
   const [liveAssistantTranscript, setLiveAssistantTranscript] = useState('');
@@ -134,6 +135,23 @@ export default function DiscussScreen() {
     });
   }, [sendRealtimeEvent]);
 
+  const toggleUserTurn = useCallback(() => {
+    const connection = connectionRef.current;
+    if (!connection || isConnecting || isSpeaking) return;
+
+    setError(null);
+    if (isRecordingTurn) {
+      setIsRecordingTurn(false);
+      setIsListening(false);
+      connection.stopUserTurn();
+    } else {
+      setLiveUserTranscript('');
+      setIsRecordingTurn(true);
+      setIsListening(true);
+      connection.startUserTurn();
+    }
+  }, [isConnecting, isRecordingTurn, isSpeaking]);
+
   const handleRealtimeEvent = useCallback(
     (event: any) => {
       switch (event.type) {
@@ -142,7 +160,9 @@ export default function DiscussScreen() {
           setLiveUserTranscript('');
           break;
         case 'input_audio_buffer.speech_stopped':
-          setIsListening(false);
+          if (!isRecordingTurn) {
+            setIsListening(false);
+          }
           break;
         case 'conversation.item.input_audio_transcription.delta':
         case 'response.audio_transcription.delta':
@@ -179,10 +199,11 @@ export default function DiscussScreen() {
           setIsConnecting(false);
           setIsSpeaking(false);
           setIsListening(false);
+          setIsRecordingTurn(false);
           break;
       }
     },
-    [appendFinalMessage, liveAssistantTranscript, liveUserTranscript],
+    [appendFinalMessage, isRecordingTurn, liveAssistantTranscript, liveUserTranscript],
   );
 
   useEffect(() => {
@@ -196,6 +217,7 @@ export default function DiscussScreen() {
       allowsRecording: true,
       playsInSilentMode: true,
       shouldPlayInBackground: false,
+      shouldRouteThroughEarpiece: false,
       interruptionMode: 'doNotMix',
     });
   }, []);
@@ -258,6 +280,8 @@ Article excerpt: ${article.content.slice(0, 900)}`,
             : message,
         );
         setIsConnecting(false);
+        setIsRecordingTurn(false);
+        setIsListening(false);
       }
     };
 
@@ -278,6 +302,7 @@ Article excerpt: ${article.content.slice(0, 900)}`,
         allowsRecording: false,
         playsInSilentMode: true,
         shouldPlayInBackground: false,
+        shouldRouteThroughEarpiece: false,
         interruptionMode: 'doNotMix',
       });
     };
@@ -451,19 +476,24 @@ Article excerpt: ${article.content.slice(0, 900)}`,
         <View style={styles.micDock}>
           <View style={styles.secondaryAction} />
 
-          <View
+          <TouchableOpacity
+            activeOpacity={0.82}
+            accessibilityRole="button"
+            accessibilityLabel={isRecordingTurn ? 'Stop speaking' : 'Start speaking'}
+            disabled={isConnecting || isSpeaking}
+            onPress={toggleUserTurn}
             style={[
               styles.micButton,
-              isListening && styles.micButtonActive,
-              isConnecting && styles.micButtonDisabled,
+              isRecordingTurn && styles.micButtonActive,
+              (isConnecting || isSpeaking) && styles.micButtonDisabled,
             ]}
           >
             <Ionicons
-              name={isListening ? 'radio-button-on' : 'mic'}
+              name={isRecordingTurn ? 'stop' : 'mic'}
               size={30}
-              color={isConnecting ? 'rgba(0,0,0,0.25)' : '#FFFFFF'}
+              color={isConnecting || isSpeaking ? 'rgba(0,0,0,0.25)' : '#FFFFFF'}
             />
-          </View>
+          </TouchableOpacity>
 
           <View style={styles.secondaryAction} />
         </View>
@@ -471,11 +501,11 @@ Article excerpt: ${article.content.slice(0, 900)}`,
         <Text style={styles.micHint}>
           {isConnecting
             ? 'Starting speaking practice...'
-            : isListening
-              ? 'Speak naturally'
-              : isSpeaking
-                ? `${tutorName} is responding`
-                : 'Speak when you are ready'}
+            : isRecordingTurn
+              ? 'Tap again when you are done'
+            : isSpeaking
+              ? `${tutorName} is responding`
+                : 'Tap the microphone to speak'}
         </Text>
       </View>
     </SafeAreaView>
