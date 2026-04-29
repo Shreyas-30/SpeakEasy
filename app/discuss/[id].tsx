@@ -21,7 +21,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type RealtimeConnection = Awaited<ReturnType<typeof createRealtimeConnection>>;
 
@@ -33,8 +33,59 @@ function createMessage(role: DiscussionMessage['role'], content: string): Discus
   };
 }
 
+function truncatePrompt(text: string, maxLength = 170): string {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trim()}…`;
+}
+
+function getArticleSeedQuestion(articleTitle: string, articleContent: string, topic: string): string {
+  const excerpt = articleContent
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const firstSentence =
+    excerpt.match(/[^.!?]+[.!?]/)?.[0]?.trim() || truncatePrompt(excerpt, 120);
+  const topicLabel = topic.toLowerCase();
+
+  if (firstSentence) {
+    return `The article says ${firstSentence} Why do you think that matters for ${topicLabel}?`;
+  }
+
+  return `This article is about “${truncatePrompt(articleTitle, 72)}”. What problem do you think it is trying to explain?`;
+}
+
+function getCurrentAssistantPrompt(
+  messages: DiscussionMessage[],
+  liveAssistantTranscript: string,
+  articleTitle: string,
+  articleContent: string,
+  topic: string,
+): string {
+  if (liveAssistantTranscript.trim()) {
+    return liveAssistantTranscript.trim();
+  }
+
+  const lastAssistantMessage = [...messages].reverse().find((message) => message.role === 'assistant');
+  if (lastAssistantMessage?.content) {
+    return lastAssistantMessage.content;
+  }
+
+  return getArticleSeedQuestion(articleTitle, articleContent, topic);
+}
+
+function getTrySayingSuggestions(articleTitle: string, topic: string): string[] {
+  const compactTitle = truncatePrompt(articleTitle, 44);
+  return [
+    `“I think this matters because…”`,
+    `“The part I noticed was…”`,
+    `“In ${topic.toLowerCase()}, this seems…”`,
+    `“About ${compactTitle}, I feel…”`,
+  ];
+}
+
 export default function DiscussScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const insets = useSafeAreaInsets();
   const {
     articles,
     savedArticles,
@@ -168,7 +219,12 @@ export default function DiscussScreen() {
           onEvent: handleRealtimeEvent,
           onOpen: () => {
             requestAssistantResponse(
-              `Start the conversation now. Welcome the learner, mention the article "${article.title}", and ask one simple opinion question.`,
+              `Start the conversation now with exactly one article-specific question.
+Do not ask "What did you think?", "Do you agree?", or "What caught your attention?"
+Base the question on one concrete detail from this article excerpt.
+Use this style: "The article says [specific detail]. Why do you think [specific consequence or tension]?"
+Article title: ${article.title}
+Article excerpt: ${article.content.slice(0, 900)}`,
             );
           },
         });
@@ -195,7 +251,12 @@ export default function DiscussScreen() {
       } catch (err) {
         if (!isMounted) return;
         console.warn('Realtime discuss failed:', err);
-        setError(err instanceof Error ? err.message : 'Unable to start speaking practice.');
+        const message = err instanceof Error ? err.message : 'Unable to start speaking practice.';
+        setError(
+          message.includes('mediaDevices') || message.includes('WebRTC')
+            ? 'Speaking practice needs a development build or TestFlight build. It is not available in Expo Go.'
+            : message,
+        );
         setIsConnecting(false);
       }
     };
@@ -224,7 +285,7 @@ export default function DiscussScreen() {
 
   if (!article) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar barStyle="dark-content" />
         <View style={styles.emptyState}>
           <Ionicons name="chatbubble-ellipses-outline" size={40} color={Colors.textSecondary} />
@@ -240,8 +301,20 @@ export default function DiscussScreen() {
     );
   }
 
+  const assistantPrompt = getCurrentAssistantPrompt(
+    messages,
+    liveAssistantTranscript,
+    article.title,
+    article.content,
+    article.topic,
+  );
+  const trySayingSuggestions = getTrySayingSuggestions(article.title, article.topic);
+  const historyMessages = messages.filter(
+    (message) => message.role === 'user' || message.content !== assistantPrompt,
+  );
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar barStyle="dark-content" />
 
       <View style={styles.header}>
@@ -253,93 +326,120 @@ export default function DiscussScreen() {
           <Ionicons name="arrow-back" size={22} color="#7A7663" />
         </TouchableOpacity>
 
-        <View style={styles.headerCenter}>
-          <View style={styles.tutorAvatar}>
-            <Ionicons name="happy-outline" size={16} color="#6A6840" />
-          </View>
-          <Text style={styles.headerTutorName}>{tutorName}</Text>
-          {isSpeaking && (
-            <View style={styles.speakingIndicator}>
-              <Text style={styles.speakingText}>speaking...</Text>
-            </View>
-          )}
-        </View>
+        <View style={styles.headerCenter} />
 
         <View style={styles.liveBadge}>
           <Text style={styles.liveText}>{isConnecting ? 'Connecting' : 'Live'}</Text>
         </View>
       </View>
 
-      <View style={styles.articleCard}>
-        <Ionicons name="document-text-outline" size={14} color="#7A7663" />
-        <Text style={styles.articleCardTitle} numberOfLines={1}>
-          {article.title}
-        </Text>
+      <View style={styles.contentArea}>
+        <View style={styles.articleCard}>
+          <Ionicons name="document-text-outline" size={14} color="#7A7663" />
+          <View style={styles.articleCardCopy}>
+            <Text style={styles.articleCardTitle} numberOfLines={1}>
+              {article.title}
+            </Text>
+            <Text style={styles.articleCardSource} numberOfLines={1}>
+              {article.source}
+            </Text>
+          </View>
+        </View>
+
+        {activeSoftPrompt ? (
+          <View style={styles.softPromptWrap}>
+            <SoftUpgradePrompt
+              trigger={activeSoftPrompt}
+              onDismiss={() => dismissSoftPrompt()}
+              onSeePlans={() => {
+                dismissSoftPrompt();
+                router.push('/subscription' as any);
+              }}
+            />
+          </View>
+        ) : null}
+
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.messagesList}
+          contentContainerStyle={styles.messagesContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.promptCard}>
+            <View style={styles.promptCardHeader}>
+              <View style={styles.promptTutorWrap}>
+                <View style={styles.promptAvatar}>
+                  <Ionicons name="happy-outline" size={22} color="#1A1A1A" />
+                </View>
+                <Text style={styles.promptTutorName}>{tutorName}</Text>
+              </View>
+              {isSpeaking ? (
+                <View style={styles.waveIcon}>
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.waveBar,
+                        { height: 12 + ((index % 3) * 5) },
+                      ]}
+                    />
+                  ))}
+                </View>
+              ) : (
+                <Ionicons name="volume-high-outline" size={22} color="#777568" />
+              )}
+            </View>
+
+            <View style={styles.promptBody}>
+              {isConnecting && !liveAssistantTranscript && messages.length === 0 ? (
+                <ActivityIndicator size="small" color="#66643B" />
+              ) : (
+                <Text style={styles.promptQuestion}>{assistantPrompt}</Text>
+              )}
+              <Text style={styles.promptHint}>Take your time -- speak naturally</Text>
+            </View>
+          </View>
+
+          <View style={styles.suggestionsSection}>
+            <Text style={styles.suggestionsLabel}>TRY SAYING</Text>
+            <View style={styles.suggestionsRow}>
+              {trySayingSuggestions.map((suggestion) => (
+                <View key={suggestion} style={styles.suggestionChip}>
+                  <Text style={styles.suggestionText} numberOfLines={1}>
+                    {suggestion}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {historyMessages.length > 0 ? (
+            <View style={styles.historySection}>
+              {historyMessages.map((msg) => (
+                <View
+                  key={msg.id}
+                  style={[styles.messageRow, msg.role === 'user' ? styles.userRow : styles.aiRow]}
+                >
+                  {msg.role === 'assistant' && (
+                    <View style={styles.avatarSmall}>
+                      <Ionicons name="happy-outline" size={14} color="#6A6840" />
+                    </View>
+                  )}
+                  <View style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.aiBubble]}>
+                    <Text style={[styles.bubbleText, msg.role === 'user' ? styles.userBubbleText : styles.aiBubbleText]}>
+                      {msg.content}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {error != null && <Text style={styles.errorText}>{error}</Text>}
+        </ScrollView>
       </View>
 
-      {activeSoftPrompt ? (
-        <View style={styles.softPromptWrap}>
-          <SoftUpgradePrompt
-            trigger={activeSoftPrompt}
-            onDismiss={() => dismissSoftPrompt()}
-            onSeePlans={() => {
-              dismissSoftPrompt();
-              router.push('/subscription' as any);
-            }}
-          />
-        </View>
-      ) : null}
-
-      <ScrollView
-        ref={scrollViewRef}
-        style={styles.messagesList}
-        contentContainerStyle={styles.messagesContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {isConnecting ? (
-          <View style={styles.aiRow}>
-            <View style={styles.avatarSmall}>
-              <Ionicons name="happy-outline" size={14} color="#6A6840" />
-            </View>
-            <View style={styles.aiBubble}>
-              <ActivityIndicator size="small" color="#66643B" />
-            </View>
-          </View>
-        ) : null}
-
-        {messages.map((msg) => (
-          <View
-            key={msg.id}
-            style={[styles.messageRow, msg.role === 'user' ? styles.userRow : styles.aiRow]}
-          >
-            {msg.role === 'assistant' && (
-              <View style={styles.avatarSmall}>
-                <Ionicons name="happy-outline" size={14} color="#6A6840" />
-              </View>
-            )}
-            <View style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.aiBubble]}>
-              <Text style={[styles.bubbleText, msg.role === 'user' ? styles.userBubbleText : styles.aiBubbleText]}>
-                {msg.content}
-              </Text>
-            </View>
-          </View>
-        ))}
-
-        {liveAssistantTranscript ? (
-          <View style={[styles.messageRow, styles.aiRow]}>
-            <View style={styles.avatarSmall}>
-              <Ionicons name="happy-outline" size={14} color="#6A6840" />
-            </View>
-            <View style={[styles.bubble, styles.aiBubble, styles.liveBubble]}>
-              <Text style={[styles.bubbleText, styles.aiBubbleText]}>{liveAssistantTranscript}</Text>
-            </View>
-          </View>
-        ) : null}
-
-        {error != null && <Text style={styles.errorText}>{error}</Text>}
-      </ScrollView>
-
-      <View style={styles.inputArea}>
+      <View style={[styles.inputArea, { paddingBottom: Math.max(insets.bottom + 14, 24) }]}>
         {(isListening || liveUserTranscript) && (
           <View style={styles.transcriptBanner}>
             <Text style={styles.transcriptText} numberOfLines={2}>
@@ -384,49 +484,130 @@ export default function DiscussScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  container: { flex: 1, backgroundColor: '#F8F7F1' },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
+  contentArea: { flex: 1, backgroundColor: '#F8F7F1' },
   header: {
-    height: 60,
+    height: 72,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 18,
+    paddingHorizontal: 22,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(0,0,0,0.06)',
   },
-  headerButton: { width: 28, alignItems: 'center', justifyContent: 'center' },
+  headerButton: { width: 32, alignItems: 'flex-start', justifyContent: 'center' },
   headerCenter: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'center' },
-  tutorAvatar: {
-    width: 28, height: 28, borderRadius: 14,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: '#DAD6C7', backgroundColor: '#FFFDF8',
-  },
-  headerTutorName: { fontSize: 15, fontWeight: '600', color: '#3A3A3A' },
-  speakingIndicator: {
-    backgroundColor: 'rgba(102,100,59,0.1)', borderRadius: 999,
-    paddingHorizontal: 8, paddingVertical: 2,
-  },
-  speakingText: { fontSize: 11, color: '#66643B', fontWeight: '500' },
   liveBadge: {
     borderRadius: 999, paddingHorizontal: 12, paddingVertical: 5,
     backgroundColor: 'rgba(161,76,76,0.07)',
   },
   liveText: { fontSize: 12, fontWeight: '500', color: '#A14C4C' },
   articleCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 18, paddingVertical: 10,
-    backgroundColor: 'rgba(161,114,76,0.06)',
-    borderBottomWidth: 1, borderBottomColor: 'rgba(161,114,76,0.15)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginHorizontal: 22,
+    marginTop: 20,
+    marginBottom: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 8,
+    backgroundColor: '#F8F7F1',
+    borderWidth: 1,
+    borderColor: '#DCCEB8',
   },
-  articleCardTitle: { fontSize: 12, color: '#7A7663', flex: 1, fontWeight: '500' },
+  articleCardCopy: { flex: 1 },
+  articleCardTitle: { fontSize: 12, color: '#1E1E1B', flex: 1, fontWeight: '600' },
+  articleCardSource: { marginTop: 3, fontSize: 11, color: '#918E80' },
   softPromptWrap: {
     paddingHorizontal: 16,
     paddingTop: 12,
     backgroundColor: '#F8F7F1',
   },
   messagesList: { flex: 1 },
-  messagesContent: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 12, gap: 12 },
+  messagesContent: { paddingHorizontal: 22, paddingTop: 26, paddingBottom: 24, gap: 20 },
+  promptCard: {
+    minHeight: 232,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    padding: 24,
+    justifyContent: 'space-between',
+  },
+  promptCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  promptTutorWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  promptAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  promptTutorName: { fontSize: 16, color: '#262621', fontWeight: '600' },
+  waveIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    height: 28,
+  },
+  waveBar: {
+    width: 3,
+    borderRadius: 999,
+    backgroundColor: '#6F6D61',
+  },
+  promptBody: {
+    gap: 18,
+  },
+  promptQuestion: {
+    fontSize: 24,
+    lineHeight: 31,
+    color: '#050505',
+    fontWeight: '700',
+    letterSpacing: -0.3,
+  },
+  promptHint: {
+    fontSize: 13,
+    color: '#A19D90',
+  },
+  suggestionsSection: {
+    marginTop: 56,
+    gap: 12,
+  },
+  suggestionsLabel: {
+    fontSize: 11,
+    color: '#A19D90',
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  suggestionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  suggestionChip: {
+    maxWidth: '48%',
+    borderRadius: 999,
+    backgroundColor: '#F1EFE7',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  suggestionText: {
+    fontSize: 13,
+    color: '#8F8B7D',
+    fontWeight: '600',
+  },
+  historySection: {
+    gap: 12,
+    paddingTop: 18,
+  },
   messageRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   userRow: { justifyContent: 'flex-end' },
   aiRow: { justifyContent: 'flex-start' },
@@ -453,7 +634,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: 'rgba(0,0,0,0.07)',
-    paddingBottom: 8,
   },
   transcriptBanner: {
     marginHorizontal: 16,
@@ -471,7 +651,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 40,
-    paddingTop: 16,
+    paddingTop: 14,
   },
   secondaryAction: {
     width: 40,
@@ -504,8 +684,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 12,
     color: '#9A9880',
-    marginTop: 8,
-    marginBottom: 4,
+    marginTop: 7,
   },
   emptyState: {
     flex: 1, alignItems: 'center', justifyContent: 'center',

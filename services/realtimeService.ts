@@ -59,6 +59,10 @@ export async function createRealtimeConnection({
   const webrtc = require('react-native-webrtc');
   const { mediaDevices, RTCPeerConnection, RTCSessionDescription } = webrtc;
 
+  if (!mediaDevices || !RTCPeerConnection || !RTCSessionDescription) {
+    throw new Error('WebRTC is unavailable in this runtime.');
+  }
+
   const localStream = await mediaDevices.getUserMedia({
     audio: true,
     video: false,
