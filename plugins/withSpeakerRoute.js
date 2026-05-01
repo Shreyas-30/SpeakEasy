@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { withDangerousMod, withXcodeProject } = require("expo/config-plugins");
+const { IOSConfig, withDangerousMod, withXcodeProject } = require("expo/config-plugins");
 
 const SWIFT_FILE_NAME = "SpeakerRouteModule.swift";
 
@@ -73,10 +73,19 @@ function withSpeakerRoute(config) {
 
   return withXcodeProject(config, (config) => {
     const project = config.modResults;
-    const target = project.getFirstTarget().uuid;
+    const projectName = config.modRequest.projectName;
+    const target = IOSConfig.XcodeUtils.getApplicationNativeTarget({
+      project,
+      projectName,
+    }).uuid;
 
     if (!project.hasFile(SWIFT_FILE_NAME)) {
-      project.addSourceFile(SWIFT_FILE_NAME, {}, target);
+      IOSConfig.XcodeUtils.addBuildSourceFileToGroup({
+        filepath: SWIFT_FILE_NAME,
+        groupName: projectName,
+        project,
+        targetUuid: target,
+      });
     }
 
     return config;
