@@ -15,19 +15,6 @@ type RealtimeSessionResponse = {
 
 export type RealtimeEventHandler = (event: any) => void;
 
-function startSpeakerRoute() {
-  try {
-    const inCallManager = require('react-native-incall-manager').default;
-    inCallManager.start({ media: 'audio', auto: false });
-    inCallManager.setForceSpeakerphoneOn(true);
-    inCallManager.setSpeakerphoneOn(true);
-    return inCallManager;
-  } catch (error) {
-    console.warn('Speaker routing helper unavailable:', error);
-    return null;
-  }
-}
-
 export async function requestRealtimeSession(
   article: Article,
   voiceId?: string | null,
@@ -80,19 +67,17 @@ export async function createRealtimeConnection({
     audio: true,
     video: false,
   });
-  const speakerRoute = startSpeakerRoute();
-  const localAudioTracks = localStream.getAudioTracks?.() ?? localStream.getTracks();
-  localAudioTracks.forEach((track: any) => {
-    track.enabled = false;
-  });
+  const localAudioTrack = (localStream.getAudioTracks?.() ?? localStream.getTracks())[0];
+  if (!localAudioTrack) {
+    throw new Error('Microphone audio track is unavailable.');
+  }
 
   const pc = new RTCPeerConnection({
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
   });
 
-  localStream.getTracks().forEach((track: any) => {
-    pc.addTrack(track, localStream);
-  });
+  const audioSender = pc.addTrack(localAudioTrack, localStream);
+  await audioSender.replaceTrack(null);
 
   pc.ontrack = (event: any) => {
     const [remoteStream] = event.streams ?? [];
@@ -102,7 +87,24 @@ export async function createRealtimeConnection({
   };
 
   const dataChannel = pc.createDataChannel('oai-events');
-  dataChannel.onopen = () => onOpen?.();
+  const pendingEvents: Record<string, unknown>[] = [];
+  const sendJsonEvent = (event: Record<string, unknown>) => {
+    if (dataChannel.readyState === 'open') {
+      dataChannel.send(JSON.stringify(event));
+    } else {
+      pendingEvents.push(event);
+    }
+  };
+
+  dataChannel.onopen = () => {
+    while (pendingEvents.length > 0) {
+      const pendingEvent = pendingEvents.shift();
+      if (pendingEvent) {
+        dataChannel.send(JSON.stringify(pendingEvent));
+      }
+    }
+    onOpen?.();
+  };
   dataChannel.onmessage = (event: { data: string }) => {
     try {
       onEvent(JSON.parse(event.data));
@@ -140,31 +142,25 @@ export async function createRealtimeConnection({
     dataChannel,
     localStream,
     sendEvent(event: Record<string, unknown>) {
-      if (dataChannel.readyState === 'open') {
-        dataChannel.send(JSON.stringify(event));
-      }
+      sendJsonEvent(event);
     },
-    startUserTurn() {
-      if (dataChannel.readyState === 'open') {
-        dataChannel.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
-      }
-      localAudioTracks.forEach((track: any) => {
-        track.enabled = true;
-      });
+    async startUserTurn() {
+      await audioSender.replaceTrack(localAudioTrack);
+      sendJsonEvent({ type: 'input_audio_buffer.clear' });
     },
-    stopUserTurn() {
-      localAudioTracks.forEach((track: any) => {
-        track.enabled = false;
-      });
-      if (dataChannel.readyState === 'open') {
-        dataChannel.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-        dataChannel.send(JSON.stringify({
-          type: 'response.create',
-          response: { output_modalities: ['audio'] },
-        }));
-      }
+    async stopUserTurn() {
+      sendJsonEvent({ type: 'input_audio_buffer.commit' });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      await audioSender.replaceTrack(null);
+    },
+    async cancelUserTurn() {
+      await audioSender.replaceTrack(null);
+      sendJsonEvent({ type: 'input_audio_buffer.clear' });
     },
     close() {
+      try {
+        audioSender.replaceTrack(null);
+      } catch {}
       try {
         dataChannel.close();
       } catch {}
@@ -173,10 +169,6 @@ export async function createRealtimeConnection({
       } catch {}
       try {
         pc.close();
-      } catch {}
-      try {
-        speakerRoute?.setForceSpeakerphoneOn(false);
-        speakerRoute?.stop();
       } catch {}
     },
   };

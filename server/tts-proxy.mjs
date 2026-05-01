@@ -18,6 +18,10 @@ const OPENAI_TRANSLATION_MODEL = process.env.OPENAI_TRANSLATION_MODEL ?? 'gpt-4.
 const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL ?? 'gpt-4o-mini';
 const OPENAI_TTS_MODEL = process.env.OPENAI_TTS_MODEL ?? 'gpt-4o-mini-tts';
 const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL ?? 'gpt-realtime-1.5';
+const OPENAI_REALTIME_TRANSCRIPTION_MODEL =
+  process.env.OPENAI_REALTIME_TRANSCRIPTION_MODEL ?? 'gpt-4o-transcribe';
+const OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE =
+  process.env.OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE ?? 'en';
 const OPENAI_REALTIME_SESSION_TARGET_SECONDS = Number.parseInt(
   process.env.OPENAI_REALTIME_SESSION_TARGET_SECONDS ?? '150',
   10,
@@ -35,6 +39,9 @@ const OPENAI_VOICES = {
   leo: { name: 'Leo', openaiVoice: 'cedar' },
   noah: { name: 'Noah', openaiVoice: 'echo' },
 };
+
+const ENGLISH_TRANSCRIPTION_PROMPT =
+  'The learner is practicing spoken English only. Transcribe only English words, common English names, numbers, and punctuation. If the audio is silent, unclear, mostly background noise, or not English, return an empty transcript instead of guessing.';
 
 function getTutorVoice(voiceId) {
   return OPENAI_VOICES[String(voiceId ?? '').trim()] ?? OPENAI_VOICES.sophia;
@@ -532,6 +539,8 @@ function buildRealtimeInstructions({ articleTitle, articleSource, articleContent
 
 The learner is intermediate at English and wants confidence for daily life, not textbook English.
 Discuss the article they just read. Ask one question at a time. Keep voice responses short, warm, and natural.
+Speak only in English. If the learner says something unclear, ask them to try again in English instead of guessing.
+Treat silence, background noise, or non-English transcript fragments as unclear audio, not as user intent.
 Every question should connect to a specific detail, claim, event, or tension from the article context.
 Never open with generic questions like "What did you think?", "Do you agree?", or "What caught your attention?"
 Open with one concrete detail from the article and a short why/how question about that detail.
@@ -579,10 +588,9 @@ async function createRealtimeClientSecret(body) {
               type: 'near_field',
             },
             transcription: {
-              model: 'gpt-4o-transcribe',
-              language: 'en',
-              prompt:
-                'The learner is practicing spoken English. Transcribe only English words. If the audio is unclear or silent, leave the transcript empty instead of guessing another language.',
+              model: OPENAI_REALTIME_TRANSCRIPTION_MODEL,
+              language: OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE,
+              prompt: ENGLISH_TRANSCRIPTION_PROMPT,
             },
             turn_detection: null,
           },

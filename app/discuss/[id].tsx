@@ -2,6 +2,7 @@ import { Colors } from '@/constants/colors';
 import { OPENAI_REALTIME_CONFIG, getSpeakingTutorVoice } from '@/constants/voice';
 import { SoftUpgradePrompt } from '@/components/SoftUpgradePrompt';
 import { createRealtimeConnection, requestRealtimeSession } from '@/services/realtimeService';
+import { clearSpeakerRoute, forceSpeakerRoute } from '@/services/speakerRoute';
 import {
   createDiscussionSession,
   saveDiscussionMessage,
@@ -83,6 +84,68 @@ function getTrySayingSuggestions(articleTitle: string, topic: string): string[] 
   ];
 }
 
+function getTextDelta(event: any): string {
+  return (
+    event.delta ??
+    event.transcript_delta ??
+    event.text_delta ??
+    event.part?.transcript ??
+    event.part?.text ??
+    ''
+  );
+}
+
+function getFinalText(event: any): string {
+  const outputText = event.response?.output
+    ?.flatMap((item: any) => item.content ?? [])
+    ?.map((content: any) => content.transcript ?? content.text ?? '')
+    ?.join('');
+
+  return (
+    event.transcript ??
+    event.text ??
+    event.output_text ??
+    event.item?.content?.[0]?.transcript ??
+    event.item?.content?.[0]?.text ??
+    outputText ??
+    ''
+  );
+}
+
+function isLikelyEnglishTranscript(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(trimmed)) return false;
+
+  const visibleChars = trimmed.replace(/\s/g, '');
+  const asciiLetters = visibleChars.match(/[A-Za-z]/g)?.length ?? 0;
+  const nonAsciiLetters = visibleChars.match(/[^\x00-\x7F]/g)?.length ?? 0;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+
+  if (asciiLetters === 0) return false;
+  if (nonAsciiLetters > asciiLetters * 0.25) return false;
+  if (words.length === 1 && asciiLetters < 3) return false;
+
+  return true;
+}
+
+function isSafeLiveEnglishTranscript(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(trimmed)) return false;
+
+  const asciiLetters = trimmed.match(/[A-Za-z]/g)?.length ?? 0;
+  const nonAsciiLetters = trimmed.match(/[^\x00-\x7F]/g)?.length ?? 0;
+
+  return asciiLetters > 0 && nonAsciiLetters <= asciiLetters * 0.15;
+}
+
+function estimateAssistantAudioTailMs(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  if (words === 0) return 1800;
+  return Math.min(Math.max(words * 360, 1800), 7000);
+}
+
 export default function DiscussScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
@@ -102,6 +165,7 @@ export default function DiscussScreen() {
   const [isConnecting, setIsConnecting] = useState(true);
   const [isListening, setIsListening] = useState(false);
   const [isRecordingTurn, setIsRecordingTurn] = useState(false);
+  const [isTurnChanging, setIsTurnChanging] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [liveUserTranscript, setLiveUserTranscript] = useState('');
   const [liveAssistantTranscript, setLiveAssistantTranscript] = useState('');
@@ -113,6 +177,30 @@ export default function DiscussScreen() {
   const hasStartedRef = useRef(false);
   const wrapUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hardStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userTranscriptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const assistantAudioReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isRecordingTurnRef = useRef(false);
+  const submittedUserTurnRef = useRef(false);
+  const userTranscriptRef = useRef('');
+  const assistantTranscriptRef = useRef('');
+  const assistantFinalizedForResponseRef = useRef(false);
+  const assistantAudioActiveRef = useRef(false);
+  const assistantResponseDoneRef = useRef(false);
+  const turnStartedAtRef = useRef(0);
+  const isTurnChangingRef = useRef(false);
+  const sawUserSpeechRef = useRef(false);
+
+  useEffect(() => {
+    isRecordingTurnRef.current = isRecordingTurn;
+  }, [isRecordingTurn]);
+
+  useEffect(() => {
+    userTranscriptRef.current = liveUserTranscript;
+  }, [liveUserTranscript]);
+
+  useEffect(() => {
+    assistantTranscriptRef.current = liveAssistantTranscript;
+  }, [liveAssistantTranscript]);
 
   const appendFinalMessage = useCallback((role: DiscussionMessage['role'], content: string) => {
     const trimmed = content.trim();
@@ -125,7 +213,32 @@ export default function DiscussScreen() {
     connectionRef.current?.sendEvent(event);
   }, []);
 
+  const setConversationAudioMode = useCallback(async (mode: 'record' | 'playback' | 'idle') => {
+    try {
+      await setAudioModeAsync({
+        allowsRecording: mode === 'record',
+        playsInSilentMode: true,
+        shouldPlayInBackground: false,
+        shouldRouteThroughEarpiece: false,
+        interruptionMode: 'doNotMix',
+      });
+      if (mode === 'playback') {
+        await forceSpeakerRoute();
+      } else if (mode === 'idle') {
+        await clearSpeakerRoute();
+      }
+    } catch (err) {
+      console.warn('Unable to update discussion audio mode:', err);
+    }
+  }, []);
+
   const requestAssistantResponse = useCallback((instructions?: string) => {
+    assistantResponseDoneRef.current = false;
+    assistantAudioActiveRef.current = false;
+    if (assistantAudioReleaseTimerRef.current) {
+      clearTimeout(assistantAudioReleaseTimerRef.current);
+      assistantAudioReleaseTimerRef.current = null;
+    }
     sendRealtimeEvent({
       type: 'response.create',
       response: {
@@ -135,75 +248,218 @@ export default function DiscussScreen() {
     });
   }, [sendRealtimeEvent]);
 
+  const releaseAssistantTurn = useCallback((delayMs = 700) => {
+    if (assistantAudioReleaseTimerRef.current) {
+      clearTimeout(assistantAudioReleaseTimerRef.current);
+    }
+    assistantAudioReleaseTimerRef.current = setTimeout(() => {
+      assistantAudioReleaseTimerRef.current = null;
+      assistantAudioActiveRef.current = false;
+      assistantResponseDoneRef.current = false;
+      setIsSpeaking(false);
+      void setConversationAudioMode('idle');
+    }, delayMs);
+  }, [setConversationAudioMode]);
+
   const toggleUserTurn = useCallback(() => {
     const connection = connectionRef.current;
-    if (!connection || isConnecting || isSpeaking) return;
+    if (!connection || isConnecting || isSpeaking || isTurnChangingRef.current) return;
 
-    setError(null);
-    if (isRecordingTurn) {
-      setIsRecordingTurn(false);
-      setIsListening(false);
-      connection.stopUserTurn();
-    } else {
-      setLiveUserTranscript('');
-      setIsRecordingTurn(true);
-      setIsListening(true);
-      connection.startUserTurn();
-    }
-  }, [isConnecting, isRecordingTurn, isSpeaking]);
+    const runTurnChange = async () => {
+      try {
+        setError(null);
+        isTurnChangingRef.current = true;
+        setIsTurnChanging(true);
+        if (isRecordingTurnRef.current) {
+          const elapsedMs = Date.now() - turnStartedAtRef.current;
+          if (elapsedMs < 800) {
+            setError('Keep speaking a little longer, then tap again.');
+            return;
+          }
+
+          isRecordingTurnRef.current = false;
+          setIsRecordingTurn(false);
+          setIsListening(false);
+          await setConversationAudioMode('playback');
+          submittedUserTurnRef.current = true;
+          await connection.stopUserTurn();
+          if (userTranscriptTimeoutRef.current) clearTimeout(userTranscriptTimeoutRef.current);
+          userTranscriptTimeoutRef.current = setTimeout(() => {
+            if (submittedUserTurnRef.current) {
+              submittedUserTurnRef.current = false;
+              userTranscriptRef.current = '';
+              setLiveUserTranscript('');
+              setError('I could not transcribe that clearly. Tap the microphone and try again.');
+            }
+          }, 7000);
+        } else {
+          submittedUserTurnRef.current = false;
+          sawUserSpeechRef.current = false;
+          userTranscriptRef.current = '';
+          setLiveUserTranscript('');
+          await setConversationAudioMode('record');
+          await connection.startUserTurn();
+          turnStartedAtRef.current = Date.now();
+          isRecordingTurnRef.current = true;
+          setIsRecordingTurn(true);
+          setIsListening(true);
+        }
+      } catch (err) {
+        console.warn('Push-to-talk turn failed:', err);
+        isRecordingTurnRef.current = false;
+        submittedUserTurnRef.current = false;
+        setIsRecordingTurn(false);
+        setIsListening(false);
+        setError('Unable to use the microphone. Please try again.');
+      } finally {
+        isTurnChangingRef.current = false;
+        setIsTurnChanging(false);
+      }
+    };
+
+    void runTurnChange();
+  }, [isConnecting, isSpeaking, setConversationAudioMode]);
 
   const handleRealtimeEvent = useCallback(
     (event: any) => {
       switch (event.type) {
         case 'input_audio_buffer.speech_started':
-          setIsListening(true);
-          setLiveUserTranscript('');
+          if (isRecordingTurnRef.current) {
+            sawUserSpeechRef.current = true;
+            setIsListening(true);
+          }
           break;
         case 'input_audio_buffer.speech_stopped':
-          if (!isRecordingTurn) {
+          if (!isRecordingTurnRef.current) {
             setIsListening(false);
           }
           break;
         case 'conversation.item.input_audio_transcription.delta':
         case 'response.audio_transcription.delta':
-          if (event.delta) {
-            setLiveUserTranscript((current) => `${current}${event.delta}`);
+        case 'conversation.item.input_audio_transcription.delta.completed': {
+          if (isRecordingTurnRef.current || submittedUserTurnRef.current) {
+            const delta = getTextDelta(event);
+            if (delta) {
+              setLiveUserTranscript((current) => {
+                const next = `${current}${delta}`;
+                if (!isSafeLiveEnglishTranscript(next)) {
+                  return current;
+                }
+                userTranscriptRef.current = next;
+                return next;
+              });
+            }
           }
           break;
+        }
         case 'conversation.item.input_audio_transcription.completed':
-        case 'response.audio_transcription.done':
-          appendFinalMessage('user', event.transcript ?? liveUserTranscript);
+        case 'conversation.item.input_audio_transcription.done':
+        case 'response.audio_transcription.done': {
+          if (!submittedUserTurnRef.current) break;
+          const transcript = getFinalText(event) || userTranscriptRef.current;
+          submittedUserTurnRef.current = false;
+          if (userTranscriptTimeoutRef.current) {
+            clearTimeout(userTranscriptTimeoutRef.current);
+            userTranscriptTimeoutRef.current = null;
+          }
+          if (isLikelyEnglishTranscript(transcript)) {
+            appendFinalMessage('user', transcript);
+            requestAssistantResponse();
+          } else {
+            setError('I did not catch that clearly in English. Tap the microphone and try again.');
+          }
+          userTranscriptRef.current = '';
           setLiveUserTranscript('');
           break;
+        }
         case 'response.audio.started':
+        case 'response.output_item.added':
+          void setConversationAudioMode('playback');
+          assistantAudioActiveRef.current = true;
           setIsSpeaking(true);
           setLiveAssistantTranscript('');
+          assistantTranscriptRef.current = '';
+          assistantFinalizedForResponseRef.current = false;
+          break;
+        case 'response.audio.delta':
+          assistantAudioActiveRef.current = true;
+          setIsSpeaking(true);
+          break;
+        case 'response.audio.done':
+          assistantAudioActiveRef.current = false;
+          if (assistantResponseDoneRef.current) {
+            releaseAssistantTurn();
+          }
           break;
         case 'response.audio_transcript.delta':
         case 'response.output_text.delta':
-          if (event.delta) {
+        case 'response.content_part.delta': {
+          const delta = getTextDelta(event);
+          if (delta) {
             setIsSpeaking(true);
-            setLiveAssistantTranscript((current) => `${current}${event.delta}`);
+            setLiveAssistantTranscript((current) => {
+              const next = `${current}${delta}`;
+              assistantTranscriptRef.current = next;
+              return next;
+            });
           }
           break;
+        }
         case 'response.audio_transcript.done':
         case 'response.output_text.done':
-          appendFinalMessage('assistant', event.transcript ?? event.text ?? liveAssistantTranscript);
+        case 'response.content_part.done': {
+          const transcript = getFinalText(event) || assistantTranscriptRef.current;
+          appendFinalMessage('assistant', transcript);
+          assistantTranscriptRef.current = '';
+          assistantFinalizedForResponseRef.current = true;
           setLiveAssistantTranscript('');
           break;
+        }
         case 'response.done':
-          setIsSpeaking(false);
+          assistantResponseDoneRef.current = true;
+          if (!assistantFinalizedForResponseRef.current) {
+            if (assistantTranscriptRef.current.trim()) {
+              appendFinalMessage('assistant', assistantTranscriptRef.current);
+              assistantTranscriptRef.current = '';
+              setLiveAssistantTranscript('');
+            } else {
+              const transcript = getFinalText(event);
+              if (transcript) appendFinalMessage('assistant', transcript);
+            }
+          }
+          assistantFinalizedForResponseRef.current = false;
+          releaseAssistantTurn(
+            assistantAudioActiveRef.current
+              ? estimateAssistantAudioTailMs(assistantTranscriptRef.current || getFinalText(event))
+              : 700,
+          );
           break;
         case 'error':
+          if (String(event.error?.message ?? '').includes('buffer too small')) {
+            submittedUserTurnRef.current = false;
+            if (userTranscriptTimeoutRef.current) {
+              clearTimeout(userTranscriptTimeoutRef.current);
+              userTranscriptTimeoutRef.current = null;
+            }
+            setLiveUserTranscript('');
+            userTranscriptRef.current = '';
+            setError('I did not hear enough audio. Tap the microphone, speak your answer, then tap again.');
+            break;
+          }
+
           setError(event.error?.message ?? 'Something went wrong with speaking practice.');
           setIsConnecting(false);
           setIsSpeaking(false);
           setIsListening(false);
           setIsRecordingTurn(false);
+          isRecordingTurnRef.current = false;
+          submittedUserTurnRef.current = false;
+          isTurnChangingRef.current = false;
+          setIsTurnChanging(false);
           break;
       }
     },
-    [appendFinalMessage, isRecordingTurn, liveAssistantTranscript, liveUserTranscript],
+    [appendFinalMessage, releaseAssistantTurn, requestAssistantResponse, setConversationAudioMode],
   );
 
   useEffect(() => {
@@ -213,14 +469,8 @@ export default function DiscussScreen() {
   }, [messages, liveAssistantTranscript, liveUserTranscript]);
 
   useEffect(() => {
-    void setAudioModeAsync({
-      allowsRecording: true,
-      playsInSilentMode: true,
-      shouldPlayInBackground: false,
-      shouldRouteThroughEarpiece: false,
-      interruptionMode: 'doNotMix',
-    });
-  }, []);
+    void setConversationAudioMode('playback');
+  }, [setConversationAudioMode]);
 
   useEffect(() => {
     if (!article || hasStartedRef.current) return;
@@ -239,16 +489,6 @@ export default function DiscussScreen() {
           clientSecret: session.clientSecret,
           model: session.model,
           onEvent: handleRealtimeEvent,
-          onOpen: () => {
-            requestAssistantResponse(
-              `Start the conversation now with exactly one article-specific question.
-Do not ask "What did you think?", "Do you agree?", or "What caught your attention?"
-Base the question on one concrete detail from this article excerpt.
-Use this style: "The article says [specific detail]. Why do you think [specific consequence or tension]?"
-Article title: ${article.title}
-Article excerpt: ${article.content.slice(0, 900)}`,
-            );
-          },
         });
 
         if (!isMounted) {
@@ -258,6 +498,16 @@ Article excerpt: ${article.content.slice(0, 900)}`,
 
         connectionRef.current = connection;
         setIsConnecting(false);
+        void setConversationAudioMode('playback');
+
+        requestAssistantResponse(
+          `Start the conversation now with exactly one article-specific question.
+Do not ask "What did you think?", "Do you agree?", or "What caught your attention?"
+Base the question on one concrete detail from this article excerpt.
+Use this style: "The article says [specific detail]. Why do you think [specific consequence or tension]?"
+Article title: ${article.title}
+Article excerpt: ${article.content.slice(0, 900)}`,
+        );
 
         wrapUpTimerRef.current = setTimeout(() => {
           requestAssistantResponse(
@@ -290,23 +540,23 @@ Article excerpt: ${article.content.slice(0, 900)}`,
     return () => {
       isMounted = false;
     };
-  }, [article, handleRealtimeEvent, requestAssistantResponse, selectedVoiceId]);
+  }, [article, handleRealtimeEvent, requestAssistantResponse, selectedVoiceId, setConversationAudioMode]);
 
   useEffect(() => {
     return () => {
       if (wrapUpTimerRef.current) clearTimeout(wrapUpTimerRef.current);
       if (hardStopTimerRef.current) clearTimeout(hardStopTimerRef.current);
+      if (userTranscriptTimeoutRef.current) clearTimeout(userTranscriptTimeoutRef.current);
+      if (assistantAudioReleaseTimerRef.current) clearTimeout(assistantAudioReleaseTimerRef.current);
+      isRecordingTurnRef.current = false;
+      submittedUserTurnRef.current = false;
+      isTurnChangingRef.current = false;
       connectionRef.current?.close();
       connectionRef.current = null;
-      void setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-        shouldPlayInBackground: false,
-        shouldRouteThroughEarpiece: false,
-        interruptionMode: 'doNotMix',
-      });
+      void clearSpeakerRoute();
+      void setConversationAudioMode('idle');
     };
-  }, []);
+  }, [setConversationAudioMode]);
 
   if (!article) {
     return (
@@ -480,18 +730,18 @@ Article excerpt: ${article.content.slice(0, 900)}`,
             activeOpacity={0.82}
             accessibilityRole="button"
             accessibilityLabel={isRecordingTurn ? 'Stop speaking' : 'Start speaking'}
-            disabled={isConnecting || isSpeaking}
+            disabled={isConnecting || isSpeaking || isTurnChanging}
             onPress={toggleUserTurn}
             style={[
               styles.micButton,
               isRecordingTurn && styles.micButtonActive,
-              (isConnecting || isSpeaking) && styles.micButtonDisabled,
+              (isConnecting || isSpeaking || isTurnChanging) && styles.micButtonDisabled,
             ]}
           >
             <Ionicons
               name={isRecordingTurn ? 'stop' : 'mic'}
               size={30}
-              color={isConnecting || isSpeaking ? 'rgba(0,0,0,0.25)' : '#FFFFFF'}
+              color={isConnecting || isSpeaking || isTurnChanging ? 'rgba(0,0,0,0.25)' : '#FFFFFF'}
             />
           </TouchableOpacity>
 
@@ -501,6 +751,8 @@ Article excerpt: ${article.content.slice(0, 900)}`,
         <Text style={styles.micHint}>
           {isConnecting
             ? 'Starting speaking practice...'
+            : isTurnChanging
+              ? 'One moment...'
             : isRecordingTurn
               ? 'Tap again when you are done'
             : isSpeaking
