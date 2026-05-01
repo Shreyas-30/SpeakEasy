@@ -3,6 +3,7 @@ const path = require("path");
 const { IOSConfig, withDangerousMod, withXcodeProject } = require("expo/config-plugins");
 
 const SWIFT_FILE_NAME = "SpeakerRouteModule.swift";
+const getSwiftProjectPath = (projectName) => `${projectName}/${SWIFT_FILE_NAME}`;
 
 const SWIFT_MODULE = `import AVFoundation
 import Foundation
@@ -50,7 +51,7 @@ function withSpeakerRoute(config) {
       const iosRoot = config.modRequest.platformProjectRoot;
       const projectName = config.modRequest.projectName;
       const appRoot = path.join(iosRoot, projectName);
-      const swiftFilePath = path.join(appRoot, SWIFT_FILE_NAME);
+      const swiftFilePath = path.join(iosRoot, getSwiftProjectPath(projectName));
       const bridgingHeaderPath = path.join(appRoot, `${projectName}-Bridging-Header.h`);
 
       fs.mkdirSync(appRoot, { recursive: true });
@@ -81,7 +82,7 @@ function withSpeakerRoute(config) {
 
     if (!project.hasFile(SWIFT_FILE_NAME)) {
       IOSConfig.XcodeUtils.addBuildSourceFileToGroup({
-        filepath: SWIFT_FILE_NAME,
+        filepath: getSwiftProjectPath(projectName),
         groupName: projectName,
         project,
         targetUuid: target,
