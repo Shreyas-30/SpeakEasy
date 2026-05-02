@@ -27,6 +27,7 @@ export default function AuthScreen() {
   const [mode, setMode] = React.useState<'sign-in' | 'sign-up'>('sign-in');
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [pendingConfirmationEmail, setPendingConfirmationEmail] = React.useState<string | null>(null);
   const { error, isLoading, user, signInWithEmail, signUpWithEmail } = useAuthStore();
   const hasHandledAuthenticatedRedirect = React.useRef(false);
 
@@ -72,12 +73,59 @@ export default function AuthScreen() {
     if (!canSubmit) return;
 
     if (isSignUp) {
-      await signUpWithEmail(email.trim(), password);
+      const submittedEmail = email.trim();
+      await signUpWithEmail(submittedEmail, password);
+      // No session means Supabase sent a confirmation email — show the check-your-email state
+      if (!useAuthStore.getState().user && !useAuthStore.getState().error) {
+        setPendingConfirmationEmail(submittedEmail);
+      }
       return;
     }
 
     await signInWithEmail(email.trim(), password);
   };
+
+  if (pendingConfirmationEmail) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => {
+              setPendingConfirmationEmail(null);
+              setMode('sign-in');
+            }}
+            style={styles.backButton}
+          >
+            <Ionicons name="arrow-back" size={22} color={Colors.text} />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.content}>
+          <View style={styles.iconWrap}>
+            <Ionicons name="mail-outline" size={36} color={Colors.accent} />
+          </View>
+          <Text style={styles.title}>Check your email</Text>
+          <Text style={styles.subtitle}>
+            We sent a confirmation link to{'\n'}
+            <Text style={styles.emailHighlight}>{pendingConfirmationEmail}</Text>
+          </Text>
+          <Text style={styles.confirmInstructions}>
+            Open the email and tap the link to verify your account. Once confirmed, come back here to sign in.
+          </Text>
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() => {
+              setPendingConfirmationEmail(null);
+              setMode('sign-in');
+            }}
+            activeOpacity={0.88}
+          >
+            <Text style={styles.primaryButtonText}>Back to sign in</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -264,5 +312,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: Colors.accent,
+  },
+  emailHighlight: {
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  confirmInstructions: {
+    marginTop: 20,
+    fontSize: 15,
+    lineHeight: 23,
+    color: Colors.textSecondary,
   },
 });
