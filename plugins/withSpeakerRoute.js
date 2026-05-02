@@ -2,47 +2,98 @@ const fs = require("fs");
 const path = require("path");
 const { IOSConfig, withDangerousMod, withXcodeProject } = require("expo/config-plugins");
 
-const SWIFT_FILE_NAME = "SpeakerRouteModule.swift";
-const getSwiftProjectPath = (projectName) => `${projectName}/${SWIFT_FILE_NAME}`;
+const MODULE_FILE_NAME = "SpeakerRouteModule.m";
+const OLD_SWIFT_FILE_NAME = "SpeakerRouteModule.swift";
+const getModuleProjectPath = (projectName) => `${projectName}/${MODULE_FILE_NAME}`;
+const getOldSwiftProjectPath = (projectName) => `${projectName}/${OLD_SWIFT_FILE_NAME}`;
 
-const SWIFT_MODULE = `import AVFoundation
-import Foundation
+const OBJECTIVE_C_MODULE = `#import <AVFoundation/AVFoundation.h>
+#import <React/RCTBridgeModule.h>
 
-@objc(SpeakerRouteModule)
-class SpeakerRouteModule: NSObject, RCTBridgeModule {
-  @objc
-  static func moduleName() -> String! {
-    return "SpeakerRouteModule"
-  }
+@interface SpeakerRouteModule : NSObject <RCTBridgeModule>
+@end
 
-  @objc
-  static func requiresMainQueueSetup() -> Bool {
-    return false
-  }
+@implementation SpeakerRouteModule
 
-  @objc(forceSpeaker:rejecter:)
-  func forceSpeaker(resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-    do {
-      try AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
-      resolve(true)
-    } catch {
-      reject("speaker_route_failed", error.localizedDescription, error)
-    }
-  }
+RCT_EXPORT_MODULE();
 
-  @objc(clearSpeakerOverride:rejecter:)
-  func clearSpeakerOverride(resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-    do {
-      try AVAudioSession.sharedInstance().overrideOutputAudioPort(.none)
-      resolve(true)
-    } catch {
-      reject("speaker_route_clear_failed", error.localizedDescription, error)
-    }
-  }
++ (BOOL)requiresMainQueueSetup
+{
+  return NO;
 }
+
+RCT_REMAP_METHOD(forceSpeaker,
+                 forceSpeakerWithResolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSError *error = nil;
+  BOOL success = [[AVAudioSession sharedInstance] overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error];
+
+  if (!success || error != nil) {
+    reject(@"speaker_route_failed", error.localizedDescription ?: @"Unable to route audio to speaker", error);
+    return;
+  }
+
+  resolve(@YES);
+}
+
+RCT_REMAP_METHOD(clearSpeakerOverride,
+                 clearSpeakerOverrideWithResolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSError *error = nil;
+  BOOL success = [[AVAudioSession sharedInstance] overrideOutputAudioPort:AVAudioSessionPortOverrideNone error:&error];
+
+  if (!success || error != nil) {
+    reject(@"speaker_route_clear_failed", error.localizedDescription ?: @"Unable to clear speaker route", error);
+    return;
+  }
+
+  resolve(@YES);
+}
+
+@end
 `;
 
-const BRIDGING_HEADER_IMPORT = "#import <React/RCTBridgeModule.h>";
+function removeProjectReferencesByName(project, fileName, targetUuid) {
+  const fileReferenceSection = project.pbxFileReferenceSection();
+  const buildFileSection = project.pbxBuildFileSection();
+  const removedFileRefs = new Set();
+  const removedBuildFiles = new Set();
+
+  for (const [key, value] of Object.entries(fileReferenceSection)) {
+    if (key.endsWith("_comment")) continue;
+    if (value?.name === fileName || value?.path?.endsWith(fileName)) {
+      removedFileRefs.add(key);
+      delete fileReferenceSection[key];
+      delete fileReferenceSection[`${key}_comment`];
+    }
+  }
+
+  for (const [key, value] of Object.entries(buildFileSection)) {
+    if (key.endsWith("_comment")) continue;
+    if (removedFileRefs.has(value?.fileRef) || value?.fileRef_comment === fileName) {
+      removedBuildFiles.add(key);
+      delete buildFileSection[key];
+      delete buildFileSection[`${key}_comment`];
+    }
+  }
+
+  const sourcesBuildPhase = project.pbxSourcesBuildPhaseObj(targetUuid);
+  if (sourcesBuildPhase?.files) {
+    sourcesBuildPhase.files = sourcesBuildPhase.files.filter(
+      (file) => !removedBuildFiles.has(file.value) && file.comment !== `${fileName} in Sources`,
+    );
+  }
+
+  const groups = project.hash.project.objects.PBXGroup ?? {};
+  for (const group of Object.values(groups)) {
+    if (!group?.children) continue;
+    group.children = group.children.filter(
+      (child) => !removedFileRefs.has(child.value) && child.comment !== fileName,
+    );
+  }
+}
 
 function withSpeakerRoute(config) {
   config = withDangerousMod(config, [
@@ -51,21 +102,14 @@ function withSpeakerRoute(config) {
       const iosRoot = config.modRequest.platformProjectRoot;
       const projectName = config.modRequest.projectName;
       const appRoot = path.join(iosRoot, projectName);
-      const swiftFilePath = path.join(iosRoot, getSwiftProjectPath(projectName));
-      const bridgingHeaderPath = path.join(appRoot, `${projectName}-Bridging-Header.h`);
+      const moduleFilePath = path.join(iosRoot, getModuleProjectPath(projectName));
+      const oldSwiftFilePath = path.join(iosRoot, getOldSwiftProjectPath(projectName));
 
       fs.mkdirSync(appRoot, { recursive: true });
-      fs.writeFileSync(swiftFilePath, SWIFT_MODULE);
+      fs.writeFileSync(moduleFilePath, OBJECTIVE_C_MODULE);
 
-      const existingHeader = fs.existsSync(bridgingHeaderPath)
-        ? fs.readFileSync(bridgingHeaderPath, "utf8")
-        : "";
-
-      if (!existingHeader.includes(BRIDGING_HEADER_IMPORT)) {
-        const nextHeader = existingHeader.trim()
-          ? `${existingHeader.trim()}\n${BRIDGING_HEADER_IMPORT}\n`
-          : `${BRIDGING_HEADER_IMPORT}\n`;
-        fs.writeFileSync(bridgingHeaderPath, nextHeader);
+      if (fs.existsSync(oldSwiftFilePath)) {
+        fs.rmSync(oldSwiftFilePath);
       }
 
       return config;
@@ -80,9 +124,11 @@ function withSpeakerRoute(config) {
       projectName,
     }).uuid;
 
-    if (!project.hasFile(SWIFT_FILE_NAME)) {
+    removeProjectReferencesByName(project, OLD_SWIFT_FILE_NAME, target);
+
+    if (!project.hasFile(MODULE_FILE_NAME)) {
       IOSConfig.XcodeUtils.addBuildSourceFileToGroup({
-        filepath: getSwiftProjectPath(projectName),
+        filepath: getModuleProjectPath(projectName),
         groupName: projectName,
         project,
         targetUuid: target,
