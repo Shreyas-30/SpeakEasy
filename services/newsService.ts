@@ -99,6 +99,10 @@ function assignDifficulty(): DifficultyLevel {
 
 // ─── The Guardian ─────────────────────────────────────────────────────────────
 
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+}
+
 async function fetchFromGuardian(
   topicId: string,
   config: GuardianConfig,
@@ -106,7 +110,7 @@ async function fetchFromGuardian(
 ): Promise<Article[]> {
   const params = new URLSearchParams({
     section:      config.section,
-    'show-fields': 'thumbnail,trailText',
+    'show-fields': 'thumbnail,trailText,bodyText',
     'page-size':  count.toString(),
     'order-by':   'newest',
     'api-key':    GUARDIAN_KEY,
@@ -119,20 +123,25 @@ async function fetchFromGuardian(
 
   return (data.response?.results ?? [])
     .filter((item: any) => item.fields?.thumbnail && item.fields?.trailText)
-    .map((item: any): Article => ({
-      id:          item.id,
-      title:       item.webTitle,
-      imageUrl:    item.fields.thumbnail,
-      topic:       TOPIC_LABELS[topicId] ?? item.sectionName,
-      topicId,
-      topicColor:  TOPIC_COLORS[topicId] ?? '#6B7280',
-      difficulty:  assignDifficulty(),
-      readTime:    estimateReadTime(item.fields.trailText),
-      publishedAt: timeAgo(item.webPublicationDate),
-      content:     item.fields.trailText,
-      url:         item.webUrl,
-      source:      'The Guardian',
-    }));
+    .map((item: any): Article => {
+      const content = item.fields.bodyText
+        ? item.fields.bodyText.trim()
+        : stripHtml(item.fields.trailText);
+      return {
+        id:          item.id,
+        title:       item.webTitle,
+        imageUrl:    item.fields.thumbnail,
+        topic:       TOPIC_LABELS[topicId] ?? item.sectionName,
+        topicId,
+        topicColor:  TOPIC_COLORS[topicId] ?? '#6B7280',
+        difficulty:  assignDifficulty(),
+        readTime:    estimateReadTime(content),
+        publishedAt: timeAgo(item.webPublicationDate),
+        content,
+        url:         item.webUrl,
+        source:      'The Guardian',
+      };
+    });
 }
 
 // ─── GNews ───────────────────────────────────────────────────────────────────
