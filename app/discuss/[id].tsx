@@ -55,20 +55,20 @@ function getArticleSeedQuestion(articleTitle: string, articleContent: string, to
   return `This article is about “${truncatePrompt(articleTitle, 72)}”. What problem do you think it is trying to explain?`;
 }
 
-function getCurrentAssistantPrompt(
-  messages: DiscussionMessage[],
+function getOpeningAssistantPrompt(
+  openingAssistantMessage: DiscussionMessage | undefined,
+  isOpeningAssistantTurn: boolean,
   liveAssistantTranscript: string,
   articleTitle: string,
   articleContent: string,
   topic: string,
 ): string {
-  if (liveAssistantTranscript.trim()) {
+  if (isOpeningAssistantTurn && liveAssistantTranscript.trim()) {
     return liveAssistantTranscript.trim();
   }
 
-  const lastAssistantMessage = [...messages].reverse().find((message) => message.role === 'assistant');
-  if (lastAssistantMessage?.content) {
-    return lastAssistantMessage.content;
+  if (openingAssistantMessage?.content) {
+    return openingAssistantMessage.content;
   }
 
   return getArticleSeedQuestion(articleTitle, articleContent, topic);
@@ -96,20 +96,26 @@ function getTextDelta(event: any): string {
 }
 
 function getFinalText(event: any): string {
+  const itemText = event.item?.content
+    ?.map((content: any) => content.transcript ?? content.text ?? '')
+    ?.join('');
+
   const outputText = event.response?.output
     ?.flatMap((item: any) => item.content ?? [])
     ?.map((content: any) => content.transcript ?? content.text ?? '')
     ?.join('');
 
-  return (
-    event.transcript ??
-    event.text ??
-    event.output_text ??
-    event.item?.content?.[0]?.transcript ??
-    event.item?.content?.[0]?.text ??
-    outputText ??
-    ''
-  );
+  const candidates = [
+    event.transcript,
+    event.text,
+    event.output_text,
+    event.part?.transcript,
+    event.part?.text,
+    itemText,
+    outputText,
+  ];
+
+  return candidates.find((value) => typeof value === 'string' && value.trim()) ?? '';
 }
 
 function isLikelyEnglishTranscript(text: string): boolean {
@@ -169,6 +175,7 @@ export default function DiscussScreen() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [liveUserTranscript, setLiveUserTranscript] = useState('');
   const [liveAssistantTranscript, setLiveAssistantTranscript] = useState('');
+  const [openingAssistantMessageId, setOpeningAssistantMessageId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const scrollViewRef = useRef<ScrollView>(null);
@@ -189,6 +196,8 @@ export default function DiscussScreen() {
   const turnStartedAtRef = useRef(0);
   const isTurnChangingRef = useRef(false);
   const sawUserSpeechRef = useRef(false);
+  const lastSpeakerRouteAtRef = useRef(0);
+  const openingAssistantMessageIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     isRecordingTurnRef.current = isRecordingTurn;
@@ -205,12 +214,24 @@ export default function DiscussScreen() {
   const appendFinalMessage = useCallback((role: DiscussionMessage['role'], content: string) => {
     const trimmed = content.trim();
     if (!trimmed) return;
-    setMessages((current) => [...current, createMessage(role, trimmed)]);
+    const message = createMessage(role, trimmed);
+    if (role === 'assistant' && !openingAssistantMessageIdRef.current) {
+      openingAssistantMessageIdRef.current = message.id;
+      setOpeningAssistantMessageId(message.id);
+    }
+    setMessages((current) => [...current, message]);
     void saveDiscussionMessage(discussionSessionIdRef.current, role, trimmed);
   }, []);
 
   const sendRealtimeEvent = useCallback((event: Record<string, unknown>) => {
     connectionRef.current?.sendEvent(event);
+  }, []);
+
+  const ensureSpeakerRoute = useCallback((force = false) => {
+    const now = Date.now();
+    if (!force && now - lastSpeakerRouteAtRef.current < 1000) return;
+    lastSpeakerRouteAtRef.current = now;
+    void forceSpeakerRoute();
   }, []);
 
   const setConversationAudioMode = useCallback(async (mode: 'record' | 'playback' | 'idle') => {
@@ -222,15 +243,13 @@ export default function DiscussScreen() {
         shouldRouteThroughEarpiece: false,
         interruptionMode: 'doNotMix',
       });
-      if (mode === 'playback') {
-        await forceSpeakerRoute();
-      } else if (mode === 'idle') {
-        await clearSpeakerRoute();
+      if (mode !== 'idle') {
+        ensureSpeakerRoute();
       }
     } catch (err) {
       console.warn('Unable to update discussion audio mode:', err);
     }
-  }, []);
+  }, [ensureSpeakerRoute]);
 
   const requestAssistantResponse = useCallback((instructions?: string) => {
     assistantResponseDoneRef.current = false;
@@ -375,6 +394,7 @@ export default function DiscussScreen() {
         case 'response.audio.started':
         case 'response.output_item.added':
           void setConversationAudioMode('playback');
+          ensureSpeakerRoute(true);
           assistantAudioActiveRef.current = true;
           setIsSpeaking(true);
           setLiveAssistantTranscript('');
@@ -382,6 +402,7 @@ export default function DiscussScreen() {
           assistantFinalizedForResponseRef.current = false;
           break;
         case 'response.audio.delta':
+          ensureSpeakerRoute();
           assistantAudioActiveRef.current = true;
           setIsSpeaking(true);
           break;
@@ -392,6 +413,7 @@ export default function DiscussScreen() {
           }
           break;
         case 'response.audio_transcript.delta':
+        case 'response.output_audio_transcript.delta':
         case 'response.output_text.delta':
         case 'response.content_part.delta': {
           const delta = getTextDelta(event);
@@ -406,6 +428,7 @@ export default function DiscussScreen() {
           break;
         }
         case 'response.audio_transcript.done':
+        case 'response.output_audio_transcript.done':
         case 'response.output_text.done':
         case 'response.content_part.done': {
           const transcript = getFinalText(event) || assistantTranscriptRef.current;
@@ -459,7 +482,7 @@ export default function DiscussScreen() {
           break;
       }
     },
-    [appendFinalMessage, releaseAssistantTurn, requestAssistantResponse, setConversationAudioMode],
+    [appendFinalMessage, ensureSpeakerRoute, releaseAssistantTurn, requestAssistantResponse, setConversationAudioMode],
   );
 
   useEffect(() => {
@@ -489,6 +512,10 @@ export default function DiscussScreen() {
           clientSecret: session.clientSecret,
           model: session.model,
           onEvent: handleRealtimeEvent,
+          onOpen: () => {
+            void setConversationAudioMode('playback');
+            ensureSpeakerRoute(true);
+          },
         });
 
         if (!isMounted) {
@@ -540,7 +567,7 @@ Article excerpt: ${article.content.slice(0, 900)}`,
     return () => {
       isMounted = false;
     };
-  }, [article, handleRealtimeEvent, requestAssistantResponse, selectedVoiceId, setConversationAudioMode]);
+  }, [article, ensureSpeakerRoute, handleRealtimeEvent, requestAssistantResponse, selectedVoiceId, setConversationAudioMode]);
 
   useEffect(() => {
     return () => {
@@ -576,8 +603,14 @@ Article excerpt: ${article.content.slice(0, 900)}`,
     );
   }
 
-  const assistantPrompt = getCurrentAssistantPrompt(
-    messages,
+  const openingAssistantMessage = openingAssistantMessageId
+    ? messages.find((message) => message.id === openingAssistantMessageId)
+    : undefined;
+  const isOpeningAssistantTurn = openingAssistantMessageId == null;
+  const liveAssistantChatTranscript = !isOpeningAssistantTurn ? liveAssistantTranscript.trim() : '';
+  const assistantPrompt = getOpeningAssistantPrompt(
+    openingAssistantMessage,
+    isOpeningAssistantTurn,
     liveAssistantTranscript,
     article.title,
     article.content,
@@ -585,8 +618,9 @@ Article excerpt: ${article.content.slice(0, 900)}`,
   );
   const trySayingSuggestions = getTrySayingSuggestions(article.title, article.topic);
   const historyMessages = messages.filter(
-    (message) => message.role === 'user' || message.content !== assistantPrompt,
+    (message) => message.id !== openingAssistantMessageId,
   );
+  const hasConversationMessages = historyMessages.length > 0 || liveAssistantChatTranscript.length > 0;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -648,7 +682,7 @@ Article excerpt: ${article.content.slice(0, 900)}`,
                 </View>
                 <Text style={styles.promptTutorName}>{tutorName}</Text>
               </View>
-              {isSpeaking ? (
+              {isSpeaking && isOpeningAssistantTurn ? (
                 <View style={styles.waveIcon}>
                   {Array.from({ length: 6 }).map((_, index) => (
                     <View
@@ -688,7 +722,7 @@ Article excerpt: ${article.content.slice(0, 900)}`,
             </View>
           </View>
 
-          {historyMessages.length > 0 ? (
+          {hasConversationMessages ? (
             <View style={styles.historySection}>
               {historyMessages.map((msg) => (
                 <View
@@ -707,6 +741,18 @@ Article excerpt: ${article.content.slice(0, 900)}`,
                   </View>
                 </View>
               ))}
+              {liveAssistantChatTranscript ? (
+                <View style={[styles.messageRow, styles.aiRow]}>
+                  <View style={styles.avatarSmall}>
+                    <Ionicons name="happy-outline" size={14} color="#6A6840" />
+                  </View>
+                  <View style={[styles.bubble, styles.aiBubble]}>
+                    <Text style={[styles.bubbleText, styles.aiBubbleText]}>
+                      {liveAssistantChatTranscript}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
             </View>
           ) : null}
 

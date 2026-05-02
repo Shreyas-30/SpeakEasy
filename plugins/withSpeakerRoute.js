@@ -26,8 +26,33 @@ RCT_REMAP_METHOD(forceSpeaker,
                  forceSpeakerWithResolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
+  AVAudioSession *session = [AVAudioSession sharedInstance];
   NSError *error = nil;
-  BOOL success = [[AVAudioSession sharedInstance] overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error];
+  AVAudioSessionCategoryOptions options =
+    AVAudioSessionCategoryOptionDefaultToSpeaker |
+    AVAudioSessionCategoryOptionAllowBluetooth |
+    AVAudioSessionCategoryOptionAllowBluetoothA2DP;
+
+  BOOL success = [session setCategory:AVAudioSessionCategoryPlayAndRecord
+                                 mode:AVAudioSessionModeVideoChat
+                              options:options
+                                error:&error];
+
+  if (!success || error != nil) {
+    reject(@"speaker_route_category_failed", error.localizedDescription ?: @"Unable to configure discussion audio", error);
+    return;
+  }
+
+  error = nil;
+  success = [session setActive:YES error:&error];
+
+  if (!success || error != nil) {
+    reject(@"speaker_route_active_failed", error.localizedDescription ?: @"Unable to activate discussion audio", error);
+    return;
+  }
+
+  error = nil;
+  success = [session overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error];
 
   if (!success || error != nil) {
     reject(@"speaker_route_failed", error.localizedDescription ?: @"Unable to route audio to speaker", error);
@@ -41,11 +66,22 @@ RCT_REMAP_METHOD(clearSpeakerOverride,
                  clearSpeakerOverrideWithResolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
+  AVAudioSession *session = [AVAudioSession sharedInstance];
   NSError *error = nil;
-  BOOL success = [[AVAudioSession sharedInstance] overrideOutputAudioPort:AVAudioSessionPortOverrideNone error:&error];
+  BOOL success = [session overrideOutputAudioPort:AVAudioSessionPortOverrideNone error:&error];
 
   if (!success || error != nil) {
     reject(@"speaker_route_clear_failed", error.localizedDescription ?: @"Unable to clear speaker route", error);
+    return;
+  }
+
+  error = nil;
+  success = [session setActive:NO
+                   withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
+                         error:&error];
+
+  if (!success || error != nil) {
+    reject(@"speaker_route_deactivate_failed", error.localizedDescription ?: @"Unable to restore audio session", error);
     return;
   }
 

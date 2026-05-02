@@ -9,17 +9,43 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { consumePendingSubscriptionIntent } from '@/services/subscriptionService';
-import { useAuthStore } from '@/store/useAuthStore';
+import {
+  AUTH_CONFIRMATION_SIGN_IN_REQUIRED,
+  useAuthStore,
+} from '@/store/useAuthStore';
+
+function stringifyParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function buildCallbackUrlFromParams(params: Record<string, string | string[] | undefined>) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    const nextValue = stringifyParam(value);
+    if (nextValue) {
+      searchParams.set(key, nextValue);
+    }
+  });
+
+  const query = searchParams.toString();
+  return query ? `speakeasy://auth-callback?${query}` : null;
+}
 
 export default function AuthCallbackScreen() {
   const url = Linking.useURL();
+  const routeParams = useLocalSearchParams();
   const { clearAuthError, error, handleAuthRedirect, isLoading, session, user } = useAuthStore();
   const handledUrlRef = React.useRef<string | null>(null);
   const hasRoutedRef = React.useRef(false);
+  const callbackUrlFromParams = React.useMemo(
+    () => buildCallbackUrlFromParams(routeParams as Record<string, string | string[] | undefined>),
+    [routeParams],
+  );
 
   const routeAfterConfirmation = React.useCallback(async () => {
     if (hasRoutedRef.current) return;
@@ -58,7 +84,8 @@ export default function AuthCallbackScreen() {
     };
 
     const confirmFromUrl = async () => {
-      const nextUrl = url ?? (await Linking.getInitialURL());
+      const initialUrl = await Linking.getInitialURL();
+      const nextUrl = url ?? initialUrl ?? callbackUrlFromParams;
       if (nextUrl) {
         await handleCallbackUrl(nextUrl);
         return;
@@ -74,7 +101,7 @@ export default function AuthCallbackScreen() {
     return () => {
       if (fallbackTimer) clearTimeout(fallbackTimer);
     };
-  }, [handleAuthRedirect, routeAfterConfirmation, url]);
+  }, [callbackUrlFromParams, handleAuthRedirect, routeAfterConfirmation, url]);
 
   React.useEffect(() => {
     if (user || session?.user) {
@@ -83,26 +110,27 @@ export default function AuthCallbackScreen() {
   }, [routeAfterConfirmation, session?.user, user]);
 
   const hasAuthenticated = Boolean(user || session?.user);
-  const visibleError = hasAuthenticated ? null : error;
+  const needsSignIn = !hasAuthenticated && error === AUTH_CONFIRMATION_SIGN_IN_REQUIRED;
+  const visibleError = hasAuthenticated || needsSignIn ? null : error;
+  const iconName = needsSignIn ? 'checkmark-circle-outline' : visibleError ? 'alert-circle-outline' : 'mail-open-outline';
+  const iconColor = needsSignIn ? Colors.accent : visibleError ? Colors.error : Colors.accent;
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <View style={styles.content}>
         <View style={styles.iconWrap}>
-          {visibleError ? (
-            <Ionicons name="alert-circle-outline" size={36} color={Colors.error} />
-          ) : (
-            <Ionicons name="mail-open-outline" size={34} color={Colors.accent} />
-          )}
+          <Ionicons name={iconName} size={visibleError ? 36 : 34} color={iconColor} />
         </View>
 
         <Text style={styles.title}>
-          {visibleError ? 'Confirmation failed' : 'Confirming your email'}
+          {visibleError ? 'Confirmation failed' : needsSignIn ? 'Email confirmed' : 'Confirming your email'}
         </Text>
         <Text style={styles.subtitle}>
           {visibleError
             ? visibleError
+            : needsSignIn
+              ? AUTH_CONFIRMATION_SIGN_IN_REQUIRED
             : 'Hang tight while SpeakEasy finishes signing you in.'}
         </Text>
 
@@ -110,17 +138,17 @@ export default function AuthCallbackScreen() {
           <ActivityIndicator color={Colors.accent} style={styles.loader} />
         ) : null}
 
-        {visibleError ? (
+        {visibleError || needsSignIn ? (
           <TouchableOpacity
             style={styles.primaryButton}
             onPress={() => router.replace('/auth' as any)}
             activeOpacity={0.88}
           >
-            <Text style={styles.primaryButtonText}>Back to sign in</Text>
+            <Text style={styles.primaryButtonText}>{needsSignIn ? 'Sign in' : 'Back to sign in'}</Text>
           </TouchableOpacity>
         ) : null}
 
-        {!isLoading && !visibleError && !hasAuthenticated ? (
+        {!isLoading && !visibleError && !needsSignIn && !hasAuthenticated ? (
           <TouchableOpacity
             style={styles.primaryButton}
             onPress={async () => {

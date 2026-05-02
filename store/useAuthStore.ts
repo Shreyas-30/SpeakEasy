@@ -26,6 +26,9 @@ interface AuthState {
   clearAuthError: () => void;
 }
 
+export const AUTH_CONFIRMATION_SIGN_IN_REQUIRED =
+  'Email confirmed. Please sign in to continue.';
+
 async function reconcileCloudState() {
   const localState = useAppStore.getState();
   const cloudState = await pullUserStateFromSupabase();
@@ -179,6 +182,12 @@ export const useAuthStore = create<AuthState>((set) => ({
       const code = params.get('code');
       const tokenHash = params.get('token_hash');
       const type = params.get('type') as EmailOtpType | null;
+      const linkError = params.get('error') ?? params.get('error_code');
+      const linkErrorDescription = params.get('error_description') ?? params.get('error_message');
+
+      if (linkError) {
+        throw new Error(linkErrorDescription ?? 'This confirmation link is invalid or expired.');
+      }
 
       if (accessToken && refreshToken) {
         const { data, error } = await supabase.auth.setSession({
@@ -233,7 +242,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
       set({
         isLoading: false,
-        error: 'This confirmation link did not include a valid login token.',
+        error: AUTH_CONFIRMATION_SIGN_IN_REQUIRED,
       });
       return false;
     } catch (error) {
