@@ -130,7 +130,11 @@ export default function HomeScreen() {
       <View style={styles.header}>
         <SpeakEasyLogo width={118} height={23} />
 
-        <TouchableOpacity style={styles.profileButton} activeOpacity={0.8}>
+        <TouchableOpacity
+          style={styles.profileButton}
+          activeOpacity={0.8}
+          onPress={() => router.push('/subscription' as any)}
+        >
           <Ionicons name="person-outline" size={20} color="#7B7B7B" />
         </TouchableOpacity>
       </View>
