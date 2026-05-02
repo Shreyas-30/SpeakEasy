@@ -431,6 +431,7 @@ export default function DiscussScreen() {
         case 'response.output_audio_transcript.done':
         case 'response.output_text.done':
         case 'response.content_part.done': {
+          if (assistantFinalizedForResponseRef.current) break;
           const transcript = getFinalText(event) || assistantTranscriptRef.current;
           appendFinalMessage('assistant', transcript);
           assistantTranscriptRef.current = '';
